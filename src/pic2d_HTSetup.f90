@@ -1883,3 +1883,150 @@ SUBROUTINE SAVE_BOUNDARY_PARTICLE_HITS_EMISSIONS_HT_SETUP
   CLOSE (21, STATUS = 'KEEP')
   
 END SUBROUTINE SAVE_BOUNDARY_PARTICLE_HITS_EMISSIONS_HT_SETUP
+
+
+!--------------------------------------------------------------------------------------------------
+!     SUBROUTINE CONST_DENSITY_IONIZATION
+!>    @details Try to keep the ion density constant by inserting one e-i pair per ion hitting any surface. Homogenious ionization within the volume defined by init_ecr_model.dat
+!!    @authors J. Held
+!!    @date    Jul-19-2023
+!-------------------------------------------------------------------------------------------------- 
+
+SUBROUTINE CONST_DENSITY_IONIZATION
+   USE ParallelOperationValues
+   USE ClusterAndItsBoundaries
+   USE IonParticles, ONLY : N_spec
+   USe CurrentProblemValues, ONLY : init_Te_eV, T_e_eV, N_max_vel, i_cylindrical, N_of_boundary_and_inner_objects, whole_object, PI
+   USE IonParticles, ONLY : Ms, init_Ti_eV
+   USE ElectronParticles, ONLY: N_electrons, electron
+   USE SetupValues
+   USE rng_wrapper
+
+   IMPLICIT NONE
+
+   INCLUDE 'mpif.h'
+
+   INTEGER ierr
+   INTEGER k,s,n
+   INTEGER i, j
+   INTEGER N_ions_to_insert, N_ions_to_insert_cluster, add_N_i_ionize, sum
+
+   REAL(8) volume_all, volume_cluster
+   REAL(8) y_min, y_max, x_min, x_max, y_min_cluster, y_max_cluster, x_min_cluster, x_max_cluster
+   REAL(8) u, diff
+
+   INTEGER tag
+   REAL(8) x, y, vx, vy, vz
+   REAL(8) insert_Te ! temp of inserted electrons [Te]
+   REAL(8) :: factor_ion, factor_electron
+   INTEGER N_electrons_world
+
+   CALL MPI_ALLREDUCE(N_electrons, N_electrons_world, 1, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, ierr)
+   !PRINT *, "Total electrons: ", N_electrons
+   !PRINT *, "Total electrons world: ", N_electrons_world
+
+   IF (Rank_of_process.EQ.0) THEN
+      ! bo hit counters from all processes should be assembled in the process with global rank zero
+      ! since COLLECT_PARTICLE_BOUNDARY_HITS was called before this (make sure it is!)
+      N_ions_to_insert = 0      
+      do s = 1, N_spec
+         do k = 1, N_of_boundary_and_inner_objects
+            N_ions_to_insert = N_ions_to_insert + whole_object(k)%ion_hit_count(s)
+         end do
+      end do
+      ! PRINT *, "Total ions to insert: ", N_ions_to_insert
+   END IF
+
+   ! Broadcast N_ions_to_insert to all processes
+   CALL MPI_BCAST(N_ions_to_insert, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+
+  
+   ! Basic idea: we insert the ions acording to the amount of electrons around
+   ! because they would be causing ionization in the real world.
+   ! So the number of e-i pairs to be produced per process (!) is:
+   add_N_i_ionize = INT(DBLE(N_ions_to_insert) * (DBLE(N_electrons)/DBLE(N_electrons_world)))
+
+   ! Since we are strictly rounding down, we would insert too few ions
+   ! So we roll a dice and re-insert, depending on how strongly we rounded
+   diff = (DBLE(N_ions_to_insert) * (DBLE(N_electrons)/DBLE(N_electrons_world))) - DBLE(add_N_i_ionize)
+   u = well_random_number()
+   IF (u.LT.diff) THEN 
+      add_N_i_ionize = add_N_i_ionize + 1
+   END IF
+
+   ! Debug below
+   ! CALL MPI_REDUCE(add_N_i_ionize, sum, 1, MPI_INTEGER, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+
+   ! IF (Rank_of_process.EQ.0) THEN
+   !    PRINT *, "Sum of all ions to insert: ", sum
+   ! END IF
+
+   ! <----- Rest of the code below is partly copied from PERFORM_IONIZATION_ECR_SETUP above ------>
+
+   ! Particles are sampled from a Maxwellian whose temperature is the one chosen at initilization
+   s = 1 ! only one species for now
+   insert_Te = 12 ! TODO: make configurable
+   factor_ion      = SQRT(init_Ti_eV(s) / T_e_eV) / (N_max_vel * SQRT(Ms(s)))
+   factor_electron = SQRT(insert_Te / T_e_eV) / N_max_vel
+
+   DO n = 1, add_N_i_ionize
+      ! Idea: we choose a random electron from the cluster and create a new ion in the same position to mimik 
+      ! real physical ionization. Automatically ensures that the density rises only where there are electrons 
+      ! present (i.e. no ionization inside the sheath)
+      k = INT(well_random_number() * (N_electrons)) + 1 ! needs +1 because fortran arrays start at 1 -.-
+      
+      if (k.gt.N_electrons) then ! not sure if needed, but cant hurt
+         k = N_electrons
+      end if
+      
+      tag = 0
+
+      ! can we do excactly the same position or will that blow something up?
+      x = electron(k)%X !+ well_random_number() - 0.5
+      y = electron(k)%Y !+ well_random_number() - 0.5
+      
+      ! if (x.gt.c_X_area_min) then
+      !    x = well_random_number() * (c_X_area_max - c_X_area_min) + 
+
+      i = INT(x)
+      j = INT(y)
+      IF (x.EQ.c_X_area_max) i = c_indx_x_max-1
+      IF (y.EQ.c_Y_area_max) j = c_indx_y_max-1
+
+      if ((i.lt.c_indx_x_min).or.(i.gt.(c_indx_x_max-1)).or.(j.lt.c_indx_y_min).or.(j.gt.(c_indx_y_max-1))) then
+         print '("Process ",i4," : ERROR IN CONST_DENSITY_IONIZATION: new particle out of cluster bounds")', Rank_of_process
+         print '("Process ",i4," : x/y/k : ",5(2x,e14.7),2x,i4)', Rank_of_process, x, y, k
+         print '("Process ",i4," : minx/maxx/miny/maxy : ",4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
+         CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
+      end if
+
+
+      ! PRINT *, "X pos: ", x
+      ! PRINT *, "Y pos: ", y
+      ! electron(k)%X = MAX(c_X_area_min,MIN( c_X_area_max,SQRT((x_limit_right**2 - x_limit_left**2)*well_random_number() + x_limit_left**2)))
+
+      ! CALL GetYCoordIoniz_ecr(y)
+
+      CALL GetMaxwellVelocity(vx)
+      CALL GetMaxwellVelocity(vy)
+      CALL GetMaxwellVelocity(vz)
+   
+      vx = vx * factor_electron
+      vy = vy * factor_electron
+      vz = vz * factor_electron
+
+      CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+
+      CALL GetMaxwellVelocity(vx)
+      CALL GetMaxwellVelocity(vy)
+      CALL GetMaxwellVelocity(vz)
+   
+      vx = vx * factor_ion
+      vy = vy * factor_ion
+      vz = vz * factor_ion
+
+      CALL ADD_ION_TO_ADD_LIST(s, x, y, vx, vy, vz, tag)
+   END DO
+
+
+END SUBROUTINE CONST_DENSITY_IONIZATION
