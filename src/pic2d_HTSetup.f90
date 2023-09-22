@@ -1887,7 +1887,7 @@ END SUBROUTINE SAVE_BOUNDARY_PARTICLE_HITS_EMISSIONS_HT_SETUP
 
 !--------------------------------------------------------------------------------------------------
 !     SUBROUTINE CONST_DENSITY_IONIZATION
-!>    @details Try to keep the ion density constant by inserting one e-i pair per ion hitting any surface. Homogenious ionization within the volume defined by init_ecr_model.dat
+!>    @details Try to keep the ion density constant by inserting one e-i pair per ion hitting any surface.
 !!    @authors J. Held
 !!    @date    Jul-19-2023
 !-------------------------------------------------------------------------------------------------- 
@@ -1896,7 +1896,7 @@ SUBROUTINE CONST_DENSITY_IONIZATION
    USE ParallelOperationValues
    USE ClusterAndItsBoundaries
    USE IonParticles, ONLY : N_spec
-   USe CurrentProblemValues, ONLY : init_Te_eV, T_e_eV, N_max_vel, i_cylindrical, N_of_boundary_and_inner_objects, whole_object, PI
+   USe CurrentProblemValues, ONLY : init_Te_eV, T_e_eV, N_max_vel, i_cylindrical, N_of_boundary_and_inner_objects, whole_object, PI, acc_rho_e
    USE IonParticles, ONLY : Ms, init_Ti_eV
    USE ElectronParticles, ONLY: N_electrons, electron
    USE SetupValues
@@ -1911,7 +1911,7 @@ SUBROUTINE CONST_DENSITY_IONIZATION
    INTEGER i, j
    INTEGER N_ions_to_insert, N_ions_to_insert_cluster, add_N_i_ionize, sum
 
-   REAL(8) volume_all, volume_cluster
+   REAL(8) this_density, max_density
    REAL(8) y_min, y_max, x_min, x_max, y_min_cluster, y_max_cluster, x_min_cluster, x_max_cluster
    REAL(8) u, diff
 
@@ -1965,9 +1965,8 @@ SUBROUTINE CONST_DENSITY_IONIZATION
 
    ! Particles are sampled from a Maxwellian whose temperature is the one chosen at initilization
    s = 1 ! only one species for now
-   insert_Te = 12 ! TODO: make configurable
    factor_ion      = SQRT(init_Ti_eV(s) / T_e_eV) / (N_max_vel * SQRT(Ms(s)))
-   factor_electron = SQRT(insert_Te / T_e_eV) / N_max_vel
+   factor_electron = SQRT(init_Te_eV / T_e_eV) / N_max_vel
 
    DO n = 1, add_N_i_ionize
       ! Idea: we choose a random electron from the cluster and create a new ion in the same position to mimik 
@@ -1981,12 +1980,8 @@ SUBROUTINE CONST_DENSITY_IONIZATION
       
       tag = 0
 
-      ! can we do excactly the same position or will that blow something up?
-      x = electron(k)%X !+ well_random_number() - 0.5
-      y = electron(k)%Y !+ well_random_number() - 0.5
-      
-      ! if (x.gt.c_X_area_min) then
-      !    x = well_random_number() * (c_X_area_max - c_X_area_min) + 
+      x = electron(k)%X
+      y = electron(k)%Y
 
       i = INT(x)
       j = INT(y)
@@ -1999,13 +1994,6 @@ SUBROUTINE CONST_DENSITY_IONIZATION
          print '("Process ",i4," : minx/maxx/miny/maxy : ",4(2x,e14.7))', Rank_of_process, c_X_area_min, c_X_area_max, c_Y_area_min, c_Y_area_max
          CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
       end if
-
-
-      ! PRINT *, "X pos: ", x
-      ! PRINT *, "Y pos: ", y
-      ! electron(k)%X = MAX(c_X_area_min,MIN( c_X_area_max,SQRT((x_limit_right**2 - x_limit_left**2)*well_random_number() + x_limit_left**2)))
-
-      ! CALL GetYCoordIoniz_ecr(y)
 
       CALL GetMaxwellVelocity(vx)
       CALL GetMaxwellVelocity(vy)
@@ -2030,3 +2018,58 @@ SUBROUTINE CONST_DENSITY_IONIZATION
 
 
 END SUBROUTINE CONST_DENSITY_IONIZATION
+
+
+!--------------------------------------------------------------------------------------------------
+!     SUBROUTINE CONST_TEMPERATURE
+!>    @details Try to keep the electron temperature constant by artificially increasing all velocity components.
+!!    @authors J. Held
+!!    @date    Sep-22-2023
+!-------------------------------------------------------------------------------------------------- 
+
+SUBROUTINE CONST_TEMPERATURE
+   USE ParallelOperationValues
+   USE ClusterAndItsBoundaries
+   USE IonParticles, ONLY : N_spec
+   USe CurrentProblemValues, ONLY : init_Te_eV, T_e_eV, N_max_vel, i_cylindrical, N_of_boundary_and_inner_objects, whole_object, PI, acc_rho_e
+   USE IonParticles, ONLY : Ms, init_Ti_eV
+   USE ElectronParticles, ONLY: N_electrons, electron
+   USE SetupValues
+   USE rng_wrapper
+
+   IMPLICIT NONE
+   INCLUDE 'mpif.h'
+
+   INTEGER ierr
+   REAL(8) energy, Te_proc, Te_world, Te_want, ratio
+   REAL(8) x, y, vx, vy, vz
+   INTEGER N_electrons_world, n
+
+   CALL MPI_ALLREDUCE(N_electrons, N_electrons_world, 1, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, ierr)
+
+
+   energy = 0
+   DO n = 1, N_electrons
+      vx = electron(n)%VX * N_max_vel
+      vy = electron(n)%VY * N_max_vel
+      vz = electron(n)%VZ * N_max_vel
+      energy = energy + SQRT(vx**2 + vy**2 + vz**2)
+   END DO
+   energy = energy/N_electrons ! to mean energy
+   Te_proc = 0.6666666667_8 * energy * T_e_eV 
+
+   CALL MPI_ALLREDUCE(Te_proc*N_electrons, Te_world, 1, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+   Te_world = Te_world/N_electrons_world
+   Te_want = init_Te_eV ! Te we are aiming for is the inital one
+   ratio = Te_want/Te_world 
+   
+   IF (ratio.gt.1.0) THEN
+      ! slightly increase all velocity components
+      DO n = 1, N_electrons
+         electron(n)%VX = electron(n)%VX*ratio
+         electron(n)%VY = electron(n)%VY*ratio
+         electron(n)%VZ = electron(n)%VZ*ratio
+      END DO
+   END IF
+
+END SUBROUTINE CONST_TEMPERATURE
