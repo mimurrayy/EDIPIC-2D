@@ -2061,14 +2061,20 @@ SUBROUTINE CONST_TEMPERATURE
    CALL MPI_ALLREDUCE(Te_proc*N_electrons, Te_world, 1, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
    Te_world = Te_world/N_electrons_world
    Te_want = init_Te_eV ! Te we are aiming for is the inital one
-   ratio = Te_want/Te_world 
+   ratio = SQRT(Te_want/Te_world)
    
    IF (ratio.gt.1.0) THEN
       ! slightly increase all velocity components
       DO n = 1, N_electrons
-         electron(n)%VX = electron(n)%VX*ratio
-         electron(n)%VY = electron(n)%VY*ratio
-         electron(n)%VZ = electron(n)%VZ*ratio
+         IF ((electron(n)%VX*ratio).lt.1.0) THEN ! check that we are still below N_max_vel
+            electron(n)%VX = electron(n)%VX*ratio
+         END IF
+         IF ((electron(n)%VY*ratio).lt.1.0) THEN
+            electron(n)%VY = electron(n)%VY*ratio
+         END IF
+         IF ((electron(n)%VZ*ratio).lt.1.0) THEN
+            electron(n)%VZ = electron(n)%VZ*ratio
+         END IF
       END DO
    END IF
 
