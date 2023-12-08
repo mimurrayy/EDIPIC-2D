@@ -1931,7 +1931,9 @@ SUBROUTINE CONST_DENSITY_IONIZATION
       N_ions_to_insert = 0      
       do s = 1, N_spec
          do k = 1, N_of_boundary_and_inner_objects
-            N_ions_to_insert = N_ions_to_insert + whole_object(k)%ion_hit_count(s)
+            IF (.NOT.whole_object(k)%reflects_all_ions) THEN
+               N_ions_to_insert = N_ions_to_insert + whole_object(k)%ion_hit_count(s)
+            END IF
          end do
       end do
       ! PRINT *, "Total ions to insert: ", N_ions_to_insert
