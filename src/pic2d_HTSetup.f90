@@ -2081,3 +2081,153 @@ SUBROUTINE CONST_TEMPERATURE
    END IF
 
 END SUBROUTINE CONST_TEMPERATURE
+
+
+!--------------------------------------------------------------------------------------------------
+!     SUBROUTINE CONST_DENSITY_IONIZATION_SURFACE
+!>    @details Try to keep the ion density constant by inserting one e-i pair per ion hitting any surface.
+!!    @authors J. Held
+!!    @date    March-18-2024
+!-------------------------------------------------------------------------------------------------- 
+
+SUBROUTINE CONST_DENSITY_IONIZATION_SURFACE
+   USE ParallelOperationValues
+   USE CurrentProblemValues
+   USE ClusterAndItsBoundaries
+   USE SetupValues
+   USE IonParticles, ONLY : N_spec, Ms, init_Ti_eV
+ 
+   USE rng_wrapper
+ 
+   IMPLICIT NONE
+ 
+   INCLUDE 'mpif.h'
+ 
+   INTEGER ierr
+ 
+   INTEGER, ALLOCATABLE :: ibufer(:)
+   INTEGER ALLOC_ERR
+ 
+   INTEGER add_N_to_emit
+   INTEGER n, m, nwo, N_plus, N_minus
+ 
+   REAL(8) x, y, vx, vy, vz
+   INTEGER tag
+   REAL(8) ::  x_ion, vx_ion, vy_ion, vz_ion !!! for ions
+   INTEGER :: s !!! number of ion species
+   INTEGER N_ions_to_insert, k
+   REAL(8) :: factor_ion, factor_electron
+
+   s = 1 
+   add_N_to_emit = 0 
+
+   factor_ion      = SQRT(init_Ti_eV(s) / T_e_eV) / (N_max_vel * SQRT(Ms(s)))
+   factor_electron = SQRT(init_Te_eV / T_e_eV) / N_max_vel
+
+   IF (Rank_of_process.EQ.0) THEN
+      ! bo hit counters from all processes should be assembled in the process with global rank zero
+      ! since COLLECT_PARTICLE_BOUNDARY_HITS was called before this (make sure it is!)
+      N_ions_to_insert = 0      
+      do s = 1, N_spec
+         do k = 1, N_of_boundary_and_inner_objects
+            IF (.NOT.whole_object(k)%reflects_all_ions) THEN
+               N_ions_to_insert = N_ions_to_insert + whole_object(k)%ion_hit_count(s)
+            END IF
+         end do
+      end do
+      ! PRINT *, "Total particles to insert: ", N_ions_to_insert
+   END IF
+
+   ! Broadcast N_ions_to_insert to all processes
+   CALL MPI_BCAST(N_ions_to_insert, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+
+   ALLOCATE(ibufer(1:N_of_boundary_objects), STAT = ALLOC_ERR)
+ 
+   IF ((cluster_rank_key.EQ.0).AND.(c_N_of_local_object_parts.GT.0)) THEN
+      IF (Rank_of_process.EQ.0) THEN
+         ibufer = 0
+         ibufer(2) = N_ions_to_insert
+         total_cathode_N_e_injected = ibufer(2)                               ! save for diagnostics
+      END IF
+ 
+ ! send all boundary cluster master processes info about the number of additionally injected particles for each boundary object
+      CALL MPI_BCAST(ibufer, N_of_boundary_objects, MPI_INTEGER, 0, COMM_BOUNDARY, ierr)
+ 
+      DO n = 1, c_N_of_local_object_parts_right
+         m = c_index_of_local_object_part_right(n)
+ 
+         nwo = c_local_object_part(m)%object_number
+ 
+         IF (nwo.EQ.2) THEN
+         ! we are here if the cluster has a segment of the boundary object that will perform emission (hardcoded object #2 now)
+         ! below it is assumed that object #2 has a shape of a straight line
+            N_plus = INT(ibufer(2) * REAL( MIN(c_local_object_part(m)%jend, c_indx_y_max-1) - whole_object(nwo)%segment(1)%jstart ) / REAL(whole_object(nwo)%L))
+            IF (c_local_object_part(m)%jend.EQ.global_maximal_j) N_plus = ibufer(2)
+ 
+            N_minus = INT(ibufer(2) * REAL( MIN(c_local_object_part(m)%jstart, c_indx_y_min) - whole_object(nwo)%segment(1)%jstart ) / REAL(whole_object(nwo)%L))
+ 
+            ! we use N_plus and N_minus to guarantee that the sum of all emitted particles is always ibufer(2)
+            add_N_to_emit = N_plus - N_minus
+ 
+         ! print '("Cluster ",i4," will emit ",i5," particles")', Rank_of_process, add_N_to_emit
+ 
+         END IF
+      END DO
+ 
+   END IF
+ 
+   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+ 
+ ! all processes in each cluster receive proper value of add_N_to_emit
+   ibufer(1) = add_N_to_emit
+   CALL MPI_BCAST(ibufer(1:1), 1, MPI_INTEGER, 0, COMM_CLUSTER, ierr)
+   add_N_to_emit = ibufer(1)
+ 
+   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
+ 
+ ! clusters that do not have to inject any additional particles may leave
+   IF (add_N_to_emit.EQ.0) RETURN
+ 
+ 
+ ! calculate number of particles to be emitted in each process of the cluster
+   IF (Rank_cluster.EQ.N_processes_cluster-1) THEN
+      ! if we can#t devide evenly, the last process emits the rest
+      add_N_to_emit = add_N_to_emit - (N_processes_cluster-1) * (add_N_to_emit / N_processes_cluster) 
+   ELSE
+      add_N_to_emit = add_N_to_emit / N_processes_cluster 
+   END IF
+   ! PRINT *, "Particles to insert: ", add_N_e_to_emit
+
+ ! produce particles to be emitted and place them into the add list
+   DO n = 1, add_N_to_emit
+ 
+      ! pure guesswork
+      y = DBLE(c_indx_y_min) + well_random_number() * DBLE(c_indx_y_max-1-c_indx_y_min)
+      ! x = DBLE(global_maximal_i)-1.0d-6
+      ! place anywhere in the cluster in front of the wall?
+      ! x = DBLE(c_indx_x_min) + well_random_number() * DBLE(c_indx_x_max-1-c_indx_x_min)
+      x = DBLE(global_maximal_i)-1.0d-6 - well_random_number() * 40 ! within 2 mm. Maybe? 
+ 
+      CALL GetMaxwellVelocity(vx)
+      vx = -vx * factor_electron
+      CALL GetMaxwellVelocity(vz)
+      vz = vz * factor_electron
+      CALL GetMaxwellVelocity(vy)
+      vy = vy * factor_electron
+
+      CALL GetMaxwellVelocity(vx_ion)
+      vx_ion = -vx_ion * factor_ion
+      CALL GetMaxwellVelocity(vz_ion)
+      vz_ion = vz_ion * factor_ion
+      CALL GetInjMaxwellVelocity(vy_ion)
+      vy_ion = vy_ion * factor_ion
+
+      tag = 0
+ 
+      CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
+      CALL ADD_ION_TO_ADD_LIST(s, x, y, vx_ion, vy_ion, vz_ion, tag)
+   END DO
+
+
+
+END SUBROUTINE CONST_DENSITY_IONIZATION_SURFACE
