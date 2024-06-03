@@ -108,6 +108,12 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
 
         probab_rcx = neutral_density_normalized(n, ion(s)%part(i)%x, ion(s)%part(i)%y) * sqrt(probab_rcx**2 + probab_rcx_therm_2)  ! account for the nonuniform density and the low-energy correction
 
+        if (ngas_m3.le.1E21) then ! less than about 4 Pa? ... 
+          if ((delta_t_s*T_cntr).le.5E-6) then ! ... then first have it running at higher pressure for some time to remove waves.
+            probab_rcx = probab_rcx/ngas_m3 * 1E21 * (1-(delta_t_s*T_cntr)/5E-6) ! linear decrease to final pressure over time
+          end if
+        end if
+
         if (well_random_number().le.probab_rcx) then
            call GetMaxwellVelocity(VX)
            call GetMaxwellVelocity(VY)
