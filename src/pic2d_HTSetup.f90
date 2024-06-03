@@ -2131,7 +2131,9 @@ SUBROUTINE CONST_DENSITY_IONIZATION_SURFACE
       do s = 1, N_spec
          do k = 1, N_of_boundary_and_inner_objects
             IF (.NOT.whole_object(k)%reflects_all_ions) THEN
-               N_ions_to_insert = N_ions_to_insert + whole_object(k)%ion_hit_count(s)
+               IF (.NOT.whole_object(k)%ion_thermalization) THEN ! thermalization still means no losses
+                  N_ions_to_insert = N_ions_to_insert + whole_object(k)%ion_hit_count(s)
+               END IF
             END IF
          end do
       end do
@@ -2206,20 +2208,20 @@ SUBROUTINE CONST_DENSITY_IONIZATION_SURFACE
       ! x = DBLE(global_maximal_i)-1.0d-6
       ! place anywhere in the cluster in front of the wall?
       ! x = DBLE(c_indx_x_min) + well_random_number() * DBLE(c_indx_x_max-1-c_indx_x_min)
-      x = DBLE(global_maximal_i)-1.0d-6 - well_random_number() * 40 ! within 2 mm. Maybe? 
+      x = DBLE(global_maximal_i)-1.0d-6 - 5.0 - well_random_number() * 35 ! between 0.25 and 2.0 mm from the right wall
  
       CALL GetMaxwellVelocity(vx)
-      vx = -vx * factor_electron
+      vx = vx * factor_electron
       CALL GetMaxwellVelocity(vz)
       vz = vz * factor_electron
       CALL GetMaxwellVelocity(vy)
       vy = vy * factor_electron
 
       CALL GetMaxwellVelocity(vx_ion)
-      vx_ion = -vx_ion * factor_ion
+      vx_ion = vx_ion * factor_ion
       CALL GetMaxwellVelocity(vz_ion)
       vz_ion = vz_ion * factor_ion
-      CALL GetInjMaxwellVelocity(vy_ion)
+      CALL GetMaxwellVelocity(vy_ion)
       vy_ion = vy_ion * factor_ion
 
       tag = 0
@@ -2227,7 +2229,5 @@ SUBROUTINE CONST_DENSITY_IONIZATION_SURFACE
       CALL ADD_ELECTRON_TO_ADD_LIST(x, y, vx, vy, vz, tag)
       CALL ADD_ION_TO_ADD_LIST(s, x, y, vx_ion, vy_ion, vz_ion, tag)
    END DO
-
-
 
 END SUBROUTINE CONST_DENSITY_IONIZATION_SURFACE
