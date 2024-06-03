@@ -51,7 +51,7 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
 
   USE MCCollisions
   USE IonParticles
-  USE CurrentProblemValues, ONLY : energy_factor_eV, delta_t_s, N_subcycles, V_scale_ms
+  USE CurrentProblemValues, ONLY : energy_factor_eV, delta_t_s, N_subcycles, V_scale_ms, T_cntr
   USE rng_wrapper
 
   IMPLICIT NONE
