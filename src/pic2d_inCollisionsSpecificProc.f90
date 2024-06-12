@@ -114,6 +114,12 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
         end if
       end if
 
+      if (ngas_m3.ge.3E21) then ! more than about 10 Pa? ... 
+        if ((delta_t_s*T_cntr).le.6E-6) then ! ... then first have it running at lower pressure for some time have it converge faster.
+          probab_rcx = ((delta_t_s*T_cntr)/6E-6) * probab_rcx + probab_rcx/ngas_m3 * 2E21 * (1 - (delta_t_s*T_cntr)/10E-6) ! linear decrease to final pressure over time
+        end if
+      end if
+
       if (well_random_number().le.probab_rcx) then
         ion(s)%part(i)%VX = vxn
         ion(s)%part(i)%VY = vyn
