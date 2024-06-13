@@ -210,9 +210,9 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
       Mi = M_i_amu(s) * amu_kg
 
       ! relative velocity between colliding particles
-      gx = vx-vxn
-      gy = vy-vyn
-      gz = vy-vyn
+      gx = vxn-vx
+      gy = vyn-vy
+      gz = vyn-vy
       g = sqrt((gx)**2 + (gy)**2 + (gz)**2)
       g_perp = sqrt(gy**2 + gz**2)
 
@@ -275,6 +275,11 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
         bmax = max(bmax_col,bmax_cx)
         b = bmax * sqrt(well_random_number())
 
+        phi = 2.0*pi*well_random_number() ! phi is always random
+        hx = g_perp * cos(phi)
+        hy = -(gy*gx*cos(phi) + g*gz*sin(phi)) / g_perp                                                
+        hz = -(gz*gx*cos(phi) - g*gy*sin(phi)) / g_perp
+
         IF (case.EQ.2) THEN ! Split case B randomly in A and C buckets
           if (well_random_number().le.(sigmaT * t_func / sigmaP)) then ! -> case A
             case = 1
@@ -299,15 +304,8 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
 
             theta0 = sqrt(2.0)*beta/xi1 * Fel
             chi = pi - 2.0 * theta0
-
-            phi = 2.0*pi*well_random_number()
-    
-            hx = g_perp * cos(phi)
-            hy = -(gy*gx*cos(phi) + g*gz*sin(phi)) / g_perp                                                
-            hz = -(gz*gx*cos(phi) - g*gy*sin(phi)) / g_perp
-            
             cos_chi = cos(chi)
-            sin_chi = abs(sin(chi))
+            sin_chi = sin(chi)
             
             ! ion post collision ion velocities
             ion(s)%part(i)%VX = (vx + Mn/(Mi + Mn) * (gx*(1-cos_chi) + hx*sin_chi))/V_scale_ms
@@ -325,33 +323,26 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
           if (beta.LT.beta0) then ! spiraling motion, VHS (variable hard sphere) model
             ! VHS model -> random direction
             ! https://stackoverflow.com/questions/5408276/
-            phi = 2*pi*well_random_number()
             theta = acos(2.0*well_random_number()-1.0)
             Rx = sin(theta) * cos(phi)
             Ry = sin(theta) * sin(phi)
             Rz = cos(theta)
-            ion(s)%part(i)%VX = (vx + 1/(Mi + Mn) * (Mi*vx + Mn*vxn - Mn*gx*Rx))/V_scale_ms
-            ion(s)%part(i)%VY = (vy + 1/(Mi + Mn) * (Mi*vy + Mn*vyn - Mn*gy*Ry))/V_scale_ms
-            ion(s)%part(i)%VZ = (vz + 1/(Mi + Mn) * (Mi*vz + Mn*vzn - Mn*gz*Rz))/V_scale_ms
+            ion(s)%part(i)%VX = (1/(Mi + Mn) * (Mi*vx + Mn*vxn - Mn*g*Rx))/V_scale_ms
+            ion(s)%part(i)%VY = (1/(Mi + Mn) * (Mi*vy + Mn*vyn - Mn*g*Ry))/V_scale_ms
+            ion(s)%part(i)%VZ = (1/(Mi + Mn) * (Mi*vz + Mn*vzn - Mn*g*Rz))/V_scale_ms
 
             if (well_random_number().le.0.5) then ! CX: (50% chance when spiraling)
-              ion(s)%part(i)%VX = (vxn - Mi/(Mi + Mn) * (gx*(1-cos_chi) + hx*sin_chi))/V_scale_ms
-              ion(s)%part(i)%VY = (vyn - Mi/(Mi + Mn) * (gy*(1-cos_chi) + hy*sin_chi))/V_scale_ms
-              ion(s)%part(i)%VZ = (vzn - Mi/(Mi + Mn) * (gz*(1-cos_chi) + hz*sin_chi))/V_scale_ms
+              ion(s)%part(i)%VX = (1/(Mi + Mn) * (Mi*vx + Mn*vxn - Mi*g*Rx))/V_scale_ms
+              ion(s)%part(i)%VY = (1/(Mi + Mn) * (Mi*vy + Mn*vyn - Mi*g*Ry))/V_scale_ms
+              ion(s)%part(i)%VZ = (1/(Mi + Mn) * (Mi*vz + Mn*vzn - Mi*g*Rz))/V_scale_ms
             end if 
           end if
         END IF
 
         IF (case.EQ.3) THEN ! collision for case C, M1 model
-          chi = pi*(1-b/d0)
-          phi = 2.0*pi*well_random_number()
-    
-          hx = g_perp * cos(phi)
-          hy = -(gy*gx*cos(phi) + g*gz*sin(phi)) / g_perp                                                
-          hz = -(gz*gx*cos(phi) - g*gy*sin(phi)) / g_perp
-          
+          chi = pi*(1-b/d0)         
           cos_chi = cos(chi)
-          sin_chi = abs(sin(chi))
+          sin_chi = sin(chi)
 
           ! post-collision ion velocities
           ion(s)%part(i)%VX = (vx + Mn/(Mi + Mn) * (gx*(1-cos_chi) + hx*sin_chi))/V_scale_ms
