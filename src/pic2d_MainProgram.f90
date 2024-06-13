@@ -344,8 +344,8 @@ PROGRAM MainProg
 
         CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
 
-        CALL PERFORM_RESONANT_CHARGE_EXCHANGE    ! the only ion-neutral collision kind for now, does not produce new ions
-
+      !   CALL PERFORM_RESONANT_CHARGE_EXCHANGE    ! the only ion-neutral collision kind for now, does not produce new ions
+        CALL PERFORM_ION_NEUTRAL_COLLISION
         CALL MPI_BARRIER(MPI_COMM_WORLD, ierr) 
 
         CALL SAVE_in_COLLISIONS
