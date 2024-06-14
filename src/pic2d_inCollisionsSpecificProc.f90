@@ -142,11 +142,11 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
   USE IonParticles
   USE CurrentProblemValues, ONLY : energy_factor_eV, delta_t_s, N_subcycles, V_scale_ms, T_cntr, pi, e_Cl, true_eps_0_Fm, amu_kg, kB_JK
   USE rng_wrapper
-  INCLUDE 'mpif.h'
-
   !use stdlib_specialfunctions_gamma, only: gamma
 
   IMPLICIT NONE
+  INCLUDE 'mpif.h'
+
 
   INTEGER s, n, i
   INTEGER ierr
