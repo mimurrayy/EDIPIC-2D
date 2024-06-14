@@ -197,6 +197,7 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
     n = collision_rcx(s)%neutral_species_index
     ngas_m3 = neutral(n)%N_m3
     Mn = neutral(n)%M_amu * amu_kg
+    vfactor = collision_rcx(s)%vfactor
 
     DO i = 1, N_ions(s)
       CX = .False.
