@@ -147,6 +147,7 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
   IMPLICIT NONE
 
   INTEGER s, n, i
+  INTEGER ierr
   LOGICAL CX ! did charge exchange occur?
   INTEGER case ! Trieschmann's three cases, 1 -> A, 2 -> B, 3 -> C
   real(8) ngas_m3, sigma_m2_1eV, probab_rcx_therm_2
@@ -321,7 +322,7 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
             if ((well_random_number().le.0.5).AND.(b.LE.bcx)) then  ! CX: identity switch (50% chance if b<bcx)
               CX = .True.
             end if
-            
+
           end if  
 
           if (beta.LT.beta0) then ! spiraling motion, VHS (variable hard sphere) model
@@ -384,6 +385,7 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
           PRINT *, "Error in PERFORM_ION_NEUTRAL_COLLISION. Energy not conserved. This should never happen. Energy lost (1-E_before/E_after): ", (E_ratio-1)
           PRINT *, "Collision case: ", case  
           PRINT *, "Charge exchange occured?: ", CX  
+          CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
         end if
 
       end if ! if col
