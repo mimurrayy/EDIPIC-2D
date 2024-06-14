@@ -147,6 +147,7 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
   IMPLICIT NONE
 
   INTEGER s, n, i
+  LOGICAL CX ! did charge exchange occur?
   INTEGER case ! Trieschmann's three cases, 1 -> A, 2 -> B, 3 -> C
   real(8) ngas_m3, sigma_m2_1eV, probab_rcx_therm_2
   real(8) factor_eV, vfactor, prob_factor
@@ -157,6 +158,7 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
   real(8) Rx, Ry, Rz
   real(8) gx, gy, gz, g, g_perp, hx, hy, hz
   real(8) Mi, Mn
+  real(8) E_ratio, E_ratio_ion
 
   real(8) neutral_density_normalized, sigma_rcx_m2 ! functions
 
@@ -194,6 +196,7 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
     Mn = neutral(n)%M_amu * amu_kg
 
     DO i = 1, N_ions(s)
+      CX = .False.
       ! create a virtual neutral particle
       call GetMaxwellVelocity(vxn)
       call GetMaxwellVelocity(vyn)
@@ -212,7 +215,7 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
       ! relative velocity between colliding particles
       gx = vxn-vx
       gy = vyn-vy
-      gz = vyn-vy
+      gz = vzn-vz
       g = sqrt((gx)**2 + (gy)**2 + (gz)**2)
       g_perp = sqrt(gy**2 + gz**2)
 
@@ -305,57 +308,83 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
             theta0 = sqrt(2.0)*beta/xi1 * Fel
             chi = pi - 2.0 * theta0
             cos_chi = cos(chi)
-            sin_chi = sin(chi)
+            sin_chi = abs(sin(chi))
             
-            ! ion post collision ion velocities
-            ion(s)%part(i)%VX = (vx + Mn/(Mi + Mn) * (gx*(1-cos_chi) + hx*sin_chi))/V_scale_ms
-            ion(s)%part(i)%VY = (vy + Mn/(Mi + Mn) * (gy*(1-cos_chi) + hy*sin_chi))/V_scale_ms
-            ion(s)%part(i)%VZ = (vz + Mn/(Mi + Mn) * (gz*(1-cos_chi) + hz*sin_chi))/V_scale_ms
+            ! post collision velocities
+            vx_ =  vx +  Mn/(Mi + Mn) * (gx*(1-cos_chi) + hx*sin_chi)
+            vy_ =  vy +  Mn/(Mi + Mn) * (gy*(1-cos_chi) + hy*sin_chi)
+            vz_ =  vz +  Mn/(Mi + Mn) * (gz*(1-cos_chi) + hz*sin_chi)
+            vxn_ = vxn - Mi/(Mi + Mn) * (gx*(1-cos_chi) + hx*sin_chi)
+            vyn_ = vyn - Mi/(Mi + Mn) * (gy*(1-cos_chi) + hy*sin_chi)
+            vzn_ = vzn - Mi/(Mi + Mn) * (gz*(1-cos_chi) + hz*sin_chi)
 
             if ((well_random_number().le.0.5).AND.(b.LE.bcx)) then  ! CX: identity switch (50% chance if b<bcx)
-              ! use neutral post-collision velocities instead (identity switch after collision)
-              ion(s)%part(i)%VX = (vxn - Mi/(Mi + Mn) * (gx*(1-cos_chi) + hx*sin_chi))/V_scale_ms
-              ion(s)%part(i)%VY = (vyn - Mi/(Mi + Mn) * (gy*(1-cos_chi) + hy*sin_chi))/V_scale_ms
-              ion(s)%part(i)%VZ = (vzn - Mi/(Mi + Mn) * (gz*(1-cos_chi) + hz*sin_chi))/V_scale_ms
+              CX = .True.
             end if
+            
           end if  
 
           if (beta.LT.beta0) then ! spiraling motion, VHS (variable hard sphere) model
             ! VHS model -> random direction
             ! https://stackoverflow.com/questions/5408276/
-            theta = acos(2.0*well_random_number()-1.0)
+            ! https://math.stackexchange.com/questions/44689/how-to-find-a-random-axis-or-unit-vector-in-3d
+            theta = acos(1.0 - 2.0*well_random_number())
             Rx = sin(theta) * cos(phi)
             Ry = sin(theta) * sin(phi)
             Rz = cos(theta)
-            ion(s)%part(i)%VX = (1/(Mi + Mn) * (Mi*vx + Mn*vxn - Mn*g*Rx))/V_scale_ms
-            ion(s)%part(i)%VY = (1/(Mi + Mn) * (Mi*vy + Mn*vyn - Mn*g*Ry))/V_scale_ms
-            ion(s)%part(i)%VZ = (1/(Mi + Mn) * (Mi*vz + Mn*vzn - Mn*g*Rz))/V_scale_ms
+            
+            ! post collision velocities
+            vx_ =  (1/(Mi + Mn)) * (Mi*vx + Mn*vxn - Mn*g*Rx)
+            vy_ =  (1/(Mi + Mn)) * (Mi*vy + Mn*vyn - Mn*g*Ry)
+            vz_ =  (1/(Mi + Mn)) * (Mi*vz + Mn*vzn - Mn*g*Rz)
+            vxn_ = (1/(Mi + Mn)) * (Mi*vx + Mn*vxn + Mi*g*Rx)
+            vyn_ = (1/(Mi + Mn)) * (Mi*vy + Mn*vyn + Mi*g*Ry)
+            vzn_ = (1/(Mi + Mn)) * (Mi*vz + Mn*vzn + Mi*g*Rz)
 
             if (well_random_number().le.0.5) then ! CX: (50% chance when spiraling)
-              ion(s)%part(i)%VX = (1/(Mi + Mn) * (Mi*vx + Mn*vxn - Mi*g*Rx))/V_scale_ms
-              ion(s)%part(i)%VY = (1/(Mi + Mn) * (Mi*vy + Mn*vyn - Mi*g*Ry))/V_scale_ms
-              ion(s)%part(i)%VZ = (1/(Mi + Mn) * (Mi*vz + Mn*vzn - Mi*g*Rz))/V_scale_ms
+              CX = .TRUE.
             end if 
+
           end if
         END IF
 
         IF (case.EQ.3) THEN ! collision for case C, M1 model
-          chi = pi*(1-b/d0)         
+          chi = pi*(1.0 - b/d0)         
           cos_chi = cos(chi)
-          sin_chi = sin(chi)
+          sin_chi = abs(sin(chi))
 
-          ! post-collision ion velocities
-          ion(s)%part(i)%VX = (vx + Mn/(Mi + Mn) * (gx*(1-cos_chi) + hx*sin_chi))/V_scale_ms
-          ion(s)%part(i)%VX = (vy + Mn/(Mi + Mn) * (gy*(1-cos_chi) + hy*sin_chi))/V_scale_ms
-          ion(s)%part(i)%VX = (vz + Mn/(Mi + Mn) * (gz*(1-cos_chi) + hz*sin_chi))/V_scale_ms
+          ! post-collision velocities
+          vx_ =  vx +  Mn/(Mi + Mn) * (gx*(1-cos_chi) + hx*sin_chi)
+          vy_ =  vy +  Mn/(Mi + Mn) * (gy*(1-cos_chi) + hy*sin_chi)
+          vz_ =  vz +  Mn/(Mi + Mn) * (gz*(1-cos_chi) + hz*sin_chi)
+          vxn_ = vxn - Mi/(Mi + Mn) * (gx*(1-cos_chi) + hx*sin_chi)
+          vyn_ = vyn - Mi/(Mi + Mn) * (gy*(1-cos_chi) + hy*sin_chi)
+          vzn_ = vzn - Mi/(Mi + Mn) * (gz*(1-cos_chi) + hz*sin_chi)
 
           if ((well_random_number().le.0.5).AND.(b.LE.bcx)) then  ! CX: identity switch (50% chance if b<bcx)
-            ! use neutral post-collision velocities instead (identity switch after collision)
-            ion(s)%part(i)%VX = (vxn - Mi/(Mi + Mn) * (gx*(1-cos_chi) + hx*sin_chi))/V_scale_ms
-            ion(s)%part(i)%VY = (vyn - Mi/(Mi + Mn) * (gy*(1-cos_chi) + hy*sin_chi))/V_scale_ms
-            ion(s)%part(i)%VZ = (vzn - Mi/(Mi + Mn) * (gz*(1-cos_chi) + hz*sin_chi))/V_scale_ms
+            CX = .TRUE.
           end if
+
         END IF 
+
+        if (CX) then ! assign neutral post-collision velcoity to the ion (col + identity switch)
+          ion(s)%part(i)%VX = vxn_/V_scale_ms
+          ion(s)%part(i)%VY = vyn_/V_scale_ms
+          ion(s)%part(i)%VZ = vzn_/V_scale_ms
+        else ! assign ion post-collision velocity (no identity switch)
+          ion(s)%part(i)%VX = vx_/V_scale_ms
+          ion(s)%part(i)%VY = vy_/V_scale_ms
+          ion(s)%part(i)%VZ = vz_/V_scale_ms
+        end if
+
+        ! Check for energy conservation. 
+        E_ratio = (0.5*Mi*(vx_**2+vy_**2+vz_**2) + 0.5*Mn*(vxn_**2 + vyn_**2 + vzn_**2))/(0.5*Mi*(vx**2+vy**2+vz**2) + 0.5*Mn*(vxn**2 + vyn**2 + vzn**2))
+        E_ratio_ion = (0.5*Mi*(vx_**2+vy_**2+vz_**2))/(0.5*Mi*(vx**2+vy**2+vz**2))
+        if ((E_ratio-1.0).GT.1E-6) then
+          PRINT *, "Error in PERFORM_ION_NEUTRAL_COLLISION. Energy not conserved. This should never happen. Energy lost (1-E_before/E_after): ", (E_ratio-1)
+          PRINT *, "Collision case: ", case  
+          PRINT *, "Charge exchange occured?: ", CX  
+        end if
 
       end if ! if col
     END DO ! ion loop
