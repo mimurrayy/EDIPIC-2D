@@ -262,15 +262,15 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
       p = max((2.0*p_cx), p_col)
 
       ! <-------------------- probe project specific adjustments ------------------------>
-      if (ngas_m3.le.1E21) then ! less than about 4 Pa? ... 
+      if (ngas_m3.le.5E20) then ! less than about 2 Pa? ... 
         if ((delta_t_s*T_cntr).le.10E-6) then ! ... then first have it running at higher collision probability for some time to remove waves.
-          p = ((delta_t_s*T_cntr)/10E-6) * p + p/ngas_m3 * 1E21 * (1 - (delta_t_s*T_cntr)/10E-6) ! linear decrease to final collision probability over time
+          p = ((delta_t_s*T_cntr)/10E-6) * p + p/ngas_m3 * 5E20 * (1 - (delta_t_s*T_cntr)/10E-6) ! linear decrease to final collision probability over time
         end if
       end if
 
-      if (ngas_m3.ge.3E21) then ! more than about 10 Pa? ... 
+      if (ngas_m3.ge.2E21) then ! more than about 8 Pa? ... 
         if ((delta_t_s*T_cntr).le.6E-6) then ! ... then first have it running at lower collision probability for some time for faster convergence.
-          p = ((delta_t_s*T_cntr)/6E-6) * p + p/ngas_m3 * 2E21 * (1 - (delta_t_s*T_cntr)/10E-6)  ! linear increase to final collision probability over time
+          p = ((delta_t_s*T_cntr)/6E-6) * p + p/ngas_m3 * 1E21 * (1 - (delta_t_s*T_cntr)/10E-6)  ! linear increase to final collision probability over time
         end if
       end if
       ! <------------------- end project specific adjustments --------------------------->
@@ -306,7 +306,7 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
             Fel = 0.0
             dtheta = 0.0002 ! unsure about stepsize TODO check
             do theta = 0, pi/2.0, dtheta ! incomplete elliptic integral of first kind (note missprint in Trieschmann's thesis)
-              Fel = Fel + 1.0/sqrt((1 - (xi**2)*sin(theta)**2))*dtheta
+              Fel = Fel + 1.0/sqrt((1 - (xi**2)*sin(theta)**2))*dtheta ! TODO doing this here is a bad idea. Need to precalculate as a function of xi
             end do
 
             theta0 = sqrt(2.0)*beta/xi1 * Fel
@@ -385,7 +385,7 @@ subroutine PERFORM_ION_NEUTRAL_COLLISION
         E_ratio = (0.5*Mi*(vx_**2+vy_**2+vz_**2) + 0.5*Mn*(vxn_**2 + vyn_**2 + vzn_**2))/(0.5*Mi*(vx**2+vy**2+vz**2) + 0.5*Mn*(vxn**2 + vyn**2 + vzn**2))
         E_ratio_ion = (0.5*Mi*(vx_**2+vy_**2+vz_**2))/(0.5*Mi*(vx**2+vy**2+vz**2))
         if ((E_ratio-1.0).GT.1E-6) then
-          PRINT *, "Error in PERFORM_ION_NEUTRAL_COLLISION. Energy not conserved. This should never happen. Energy lost (1-E_before/E_after): ", (E_ratio-1)
+          PRINT *, "Error in PERFORM_ION_NEUTRAL_COLLISION. Energy not conserved. This should never happen. Energy lost (1-E_before/E_after): ", (1-E_ratio)
           PRINT *, "Collision case: ", case  
           PRINT *, "Charge exchange occured?: ", CX  
           CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
