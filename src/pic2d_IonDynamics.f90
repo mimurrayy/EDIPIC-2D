@@ -34,7 +34,7 @@ SUBROUTINE ADVANCE_IONS
   LOGICAL collision_with_inner_object_occurred
 
 ! functions
-  REAL(8) Bx, By, Bz, Ez
+  REAL(8) Bx, By, Bz, Exe, Eye, Eze
 
 ! clear counters of particles to be sent to neighbor processes
   N_ions_to_send_left = 0
@@ -92,10 +92,12 @@ SUBROUTINE ADVANCE_IONS
         E_X = acc_EX(i,j) * ax_i * ay_j + acc_EX(i+1,j) * ax_ip1 * ay_j + acc_EX(i,j+1) * ax_i * ay_jp1 + acc_EX(i+1,j+1) * ax_ip1 * ay_jp1   ! use accumulaed (averaged) electric fields
         E_Y = acc_EY(i,j) * ax_i * ay_j + acc_EY(i+1,j) * ax_ip1 * ay_j + acc_EY(i,j+1) * ax_i * ay_jp1 + acc_EY(i+1,j+1) * ax_ip1 * ay_jp1   !
 
-        IF (ions_sense_Ez) THEN
-           E_Z = Ez(ion(s)%part(k)%X, ion(s)%part(k)%Y) * N_subcycles         ! Aug-3-2017 found a bug here, N_subcycles was missing
+        IF (ions_sense_E_ext) THEN
+         E_Z = Eze(ion(s)%part(k)%X, ion(s)%part(k)%Y) * N_subcycles         ! Aug-3-2017 found a bug here, N_subcycles was missing
+         E_X = E_X + Exe(ion(s)%part(k)%X, ion(s)%part(k)%Y) * N_subcycles  
+         E_Y = E_Y + Eye(ion(s)%part(k)%X, ion(s)%part(k)%Y) * N_subcycles  
         ELSE
-           E_Z = 0.0_8
+         E_Z = 0.0_8
         END IF
 
         IF (ions_sense_magnetic_field) THEN

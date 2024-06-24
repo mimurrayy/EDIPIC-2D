@@ -6,6 +6,8 @@ MODULE ExternalFields
   REAL(8) By_ext
   REAL(8) Bz_ext
 
+  REAL(8) Ex_ext
+  REAL(8) Ey_ext
   REAL(8) Ez_ext
 
 ! parameters magnetic field as in the paper of Boeuf and Garrigues
@@ -493,6 +495,8 @@ END MODULE ArraysOfGridValues
 !
 MODULE ElectronParticles
 
+  LOGICAL electrons_sense_E_ext
+
   TYPE particle
      REAL(8) X
      REAL(8) Y
@@ -539,7 +543,7 @@ END MODULE ElectronParticles
 MODULE IonParticles
 
   LOGICAL ions_sense_magnetic_field
-  LOGICAL ions_sense_EZ
+  LOGICAL ions_sense_E_ext
   INTEGER :: i_freeze_ions ! indicates if ions are moving or frozen in current simulation
 
 !  INTEGER, PARAMETER :: N_spec = 1         ! number of ion species

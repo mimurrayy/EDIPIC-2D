@@ -3873,7 +3873,7 @@ SUBROUTINE DISTRIBUTE_PARTICLES
   REAL(8) :: Rmax,Delta_z_max ! artificall coefficients to intilialize plasma on portion of domain only
 
 ! functions
-  REAL(8) Bx, By, Bz, Ez
+  REAL(8) Bx, By, Bz, Eze
 
   Rmax = Delta_r !0.8_8
   Delta_z_max = Delta_z !0.4_8
@@ -4086,7 +4086,12 @@ SUBROUTINE DISTRIBUTE_PARTICLES
 
         IF (myB2.GT.0.0_8) THEN
 ! account possible ExB drifts for electrons
-           myEz_Vm = E_scale_Vm * Ez(electron(k)%X, electron(k)%Y)
+           IF (electrons_sense_E_ext) THEN
+             myEz_Vm = E_scale_Vm * Eze(electron(k)%X, electron(k)%Y)
+           ELSE
+             myEz_Vm = 0.0_8
+           END IF
+
            vx_drift = ( myEy_Vm * myBz_T - myEz_Vm * myBy_T) / myB2
            vy_drift = ( myEz_Vm * myBx_T) / myB2
            vz_drift = (-myEy_Vm * myBx_T) / myB2

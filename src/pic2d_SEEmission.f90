@@ -157,6 +157,7 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
 !  USE ParallelOperationValues
   USE ClusterAndItsBoundaries
   USE CurrentProblemValues
+  USE ElectronParticles, ONLY : electrons_sense_E_ext
 
   USE rng_wrapper
 
@@ -196,7 +197,7 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
   REAL(8) :: vx_drift, vy_drift, vz_drift  
 
 ! functions
-  REAL(8) :: Bx, By, Bz, Ez  
+  REAL(8) :: Bx, By, Bz, Eze  
 
 ! for inner object
   INTEGER i_left_top, i_right_top, i_right_bottom, i_left_bottom_bis, ip1
@@ -386,7 +387,12 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
 
       IF (myB2.GT.0.0_8) THEN
       ! account possible ExB drifts for electrons
-         myEz_Vm = E_scale_Vm * Ez(x, y)
+         IF (electrons_sense_E_ext) THEN
+           myEz_Vm = E_scale_Vm * Eze(x,y)
+         ELSE
+           myEz_Vm = 0.0_8
+         END IF
+
          vx_drift = ( myEy_Vm * myBz_T - myEz_Vm * myBy_T) / myB2
          vy_drift = ( myEz_Vm * myBx_T) / myB2
          vz_drift = (-myEy_Vm * myBx_T) / myB2
@@ -674,7 +680,12 @@ SUBROUTINE INJECT_ELASTIC_REFLECTED_ELECTRON(x, y, vx, vy, vz, v, tag, myobject,
    
          IF (myB2.GT.0.0_8) THEN
          ! account possible ExB drifts for electrons
-            myEz_Vm = E_scale_Vm * Ez(x, y)
+            IF (electrons_sense_E_ext) THEN
+              myEz_Vm = E_scale_Vm * Eze(x, y)
+            ELSE
+              myEz_Vm = 0.0_8
+            END IF
+
             vx_drift = ( myEy_Vm * myBz_T - myEz_Vm * myBy_T) / myB2
             vy_drift = ( myEz_Vm * myBx_T) / myB2
             vz_drift = (-myEy_Vm * myBx_T) / myB2
