@@ -181,17 +181,17 @@ SUBROUTINE PERFORM_ION_NEUTRAL_COLLISION
           p_col = ngas_m3 * sqrt(8.0*a/mr) * pi * (beta_inf**2) * delta_t_s * N_subcycles * neutral_density_normalized(n, ion(s)%part(i)%x, ion(s)%part(i)%y)
     
           ! <-------------------- probe project specific adjustments ------------------------>
-      ! if (ngas_m3.le.5E20) then ! less than about 2 Pa? ... 
-      !   if ((delta_t_s*T_cntr).le.10E-6) then ! ... then first have it running at higher collision probability for some time to remove waves.
-      !     p = ((delta_t_s*T_cntr)/10E-6) * p + p/ngas_m3 * 5E20 * (1 - (delta_t_s*T_cntr)/10E-6) ! linear decrease to final collision probability over time
-      !   end if
-      ! end if
+          if (ngas_m3.le.5E20) then ! less than about 2 Pa? ... 
+            if ((delta_t_s*T_cntr).le.10E-6) then ! ... then first have it running at higher collision probability for some time to remove waves.
+              p_col = ((delta_t_s*T_cntr)/10E-6) * p_col + p_col/ngas_m3 * 5E20 * (1 - (delta_t_s*T_cntr)/10E-6) ! linear decrease to final collision probability over time
+            end if
+          end if
 
-      ! if (ngas_m3.ge.2E21) then ! more than about 8 Pa? ... 
-      !   if ((delta_t_s*T_cntr).le.6E-6) then ! ... then first have it running at lower collision probability for some time for faster convergence.
-      !     p = ((delta_t_s*T_cntr)/6E-6) * p + p/ngas_m3 * 1E21 * (1 - (delta_t_s*T_cntr)/10E-6)  ! linear increase to final collision probability over time
-      !   end if
-      ! end if
+          if (ngas_m3.ge.2E21) then ! more than about 8 Pa? ... 
+            if ((delta_t_s*T_cntr).le.6E-6) then ! ... then first have it running at lower collision probability for some time for faster convergence.
+              p_col = ((delta_t_s*T_cntr)/6E-6) * p_col + p_col/ngas_m3 * 1E21 * (1 - (delta_t_s*T_cntr)/10E-6)  ! linear increase to final collision probability over time
+            end if
+          end if
       ! <------------------- end project specific adjustments --------------------------->
     
           if (well_random_number().le.p_col) then ! perform collision
