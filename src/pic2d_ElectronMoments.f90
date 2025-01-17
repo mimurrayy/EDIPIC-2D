@@ -48,7 +48,7 @@ SUBROUTINE COLLECT_ELECTRON_MOMENTS
 
   REAL(8) dax_ip1, dax_i, day_jp1, day_j
   REAL(8) E_X, E_Y, E_Z, B_X, B_Y, B_Z
-  REAL(8) Bx, By, Bz, Exe, Eye, Eze       ! functions
+  REAL(8) Bx, By, Bz, Ez       ! functions
   REAL(8) alfa_x, alfa_y, alfa_z
   REAL(8) alfa_x2, alfa_y2, alfa_z2
   REAL(8) theta2, invtheta
@@ -177,13 +177,7 @@ SUBROUTINE COLLECT_ELECTRON_MOMENTS
 
      E_X = EX(i,j) * dax_i * day_j + EX(i+1,j) * dax_ip1 * day_j + EX(i,j+1) * dax_i * day_jp1 + EX(i+1,j+1) * dax_ip1 * day_jp1
      E_Y = EY(i,j) * dax_i * day_j + EY(i+1,j) * dax_ip1 * day_j + EY(i,j+1) * dax_i * day_jp1 + EY(i+1,j+1) * dax_ip1 * day_jp1
-     IF (electrons_sense_E_ext) THEN
-      E_Z = Eze(electron(k)%X, electron(k)%Y)
-      E_X = E_X + Exe(electron(k)%X, electron(k)%Y)
-      E_Y = E_Y + Eye(electron(k)%X, electron(k)%Y)  
-     ELSE
-      E_Z = 0.0_8
-     END IF
+     E_Z = Ez(electron(k)%X, electron(k)%Y)
 
      B_X = BX_grid(i,j) * ax_i * ay_j + BX_grid(i+1,j) * ax_ip1 * ay_j + BX_grid(i,j+1) * ax_i * ay_jp1 + BX_grid(i+1,j+1) * ax_ip1 * ay_jp1
      B_Y = BY_grid(i,j) * ax_i * ay_j + BY_grid(i+1,j) * ax_ip1 * ay_j + BY_grid(i,j+1) * ax_i * ay_jp1 + BY_grid(i+1,j+1) * ax_ip1 * ay_jp1

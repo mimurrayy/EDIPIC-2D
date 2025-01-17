@@ -497,7 +497,7 @@ SUBROUTINE SAVE_TRACED_PARTICLES_e
   INTEGER kk
 
 ! functions
-  REAL(8) Eze, Bx, By, Bz
+  REAL(8) Ez, Bx, By, Bz
 
   IF (T_cntr.NE.T_cntr_save_traced_electrons) RETURN
 
@@ -562,7 +562,7 @@ SUBROUTINE SAVE_TRACED_PARTICLES_e
      END IF
 
      IF (save_e_extEz) THEN
-        rbufer(pos+shift) = REAL(Eze(electron(k)%X, electron(k)%Y) * E_scale_Vm)
+        rbufer(pos+shift) = REAL(Ez(electron(k)%X, electron(k)%Y) * E_scale_Vm)
         shift = shift+1
      END IF
 

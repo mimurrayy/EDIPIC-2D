@@ -48,20 +48,25 @@ end function sigma_rcx_m2
 !
 subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
 
+!  USE ParallelOperationValues
+
   USE MCCollisions
   USE IonParticles
-  USE CurrentProblemValues, ONLY : energy_factor_eV, delta_t_s, N_subcycles, V_scale_ms, T_cntr
+  USE CurrentProblemValues, ONLY : energy_factor_eV, delta_t_s, N_subcycles, V_scale_ms
   USE rng_wrapper
 
   IMPLICIT NONE
+
+!  INCLUDE 'mpif.h'
+!  INTEGER ierr
+!  INTEGER stattus(MPI_STATUS_SIZE)
 
   INTEGER s, n, i
   real(8) ngas_m3, sigma_m2_1eV, alpha, probab_rcx_therm_2
   real(8) factor_eV, vfactor, prob_factor
 
-  real(8) vx, vy, vz, energy_eV, vr_ms
+  real(8) vx, vy, vz, vsq, energy_eV, vabs_ms
   real(8) probab_rcx
-  real(8) vxn, vyn, vzn, vr
 
 ! functions
   real(8) neutral_density_normalized, sigma_rcx_m2
@@ -112,11 +117,13 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
 !           ion(s)%part(k)%tag = CXtag
            collision_rcx(s)%counter = collision_rcx(s)%counter + 1
 !        else
-      end if
-    END DO
+        end if
+     END DO
+
   END DO   
 
 END SUBROUTINE PERFORM_RESONANT_CHARGE_EXCHANGE
+
 
 
 SUBROUTINE PERFORM_ION_NEUTRAL_COLLISION
@@ -181,20 +188,6 @@ SUBROUTINE PERFORM_ION_NEUTRAL_COLLISION
           CX = .False.
           a = alpha0 * (q**2) / (2.0*(4.0*pi*true_eps_0_Fm))
           p_col = ngas_m3 * sqrt(8.0*a/mr) * pi * (beta_inf**2) * delta_t_s * N_subcycles * neutral_density_normalized(n, ion(s)%part(i)%x, ion(s)%part(i)%y)
-    
-          ! <-------------------- probe project specific adjustments ------------------------>
-      ! if (ngas_m3.le.5E20) then ! less than about 2 Pa? ... 
-      !   if ((delta_t_s*T_cntr).le.10E-6) then ! ... then first have it running at higher collision probability for some time to remove waves.
-      !     p = ((delta_t_s*T_cntr)/10E-6) * p + p/ngas_m3 * 5E20 * (1 - (delta_t_s*T_cntr)/10E-6) ! linear decrease to final collision probability over time
-      !   end if
-      ! end if
-
-      ! if (ngas_m3.ge.2E21) then ! more than about 8 Pa? ... 
-      !   if ((delta_t_s*T_cntr).le.6E-6) then ! ... then first have it running at lower collision probability for some time for faster convergence.
-      !     p = ((delta_t_s*T_cntr)/6E-6) * p + p/ngas_m3 * 1E21 * (1 - (delta_t_s*T_cntr)/10E-6)  ! linear increase to final collision probability over time
-      !   end if
-      ! end if
-      ! <------------------- end project specific adjustments --------------------------->
     
           if (well_random_number().le.p_col) then ! perform collision
             collision_rcx(s)%counter = collision_rcx(s)%counter + 1

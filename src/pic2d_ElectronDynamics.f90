@@ -36,7 +36,7 @@ SUBROUTINE ADVANCE_ELECTRONS
   INTEGER :: n_obj_collision
 
 ! functions
-  REAL(8) Bx, By, Bz, Exe, Eye, Eze
+  REAL(8) Bx, By, Bz, Ez
 
 ! clear counters of particles to be sent to neighbor processes
   N_e_to_send_left = 0
@@ -92,13 +92,7 @@ end if
 
      E_X = EX(i,j) * ax_i * ay_j + EX(i+1,j) * ax_ip1 * ay_j + EX(i,j+1) * ax_i * ay_jp1 + EX(i+1,j+1) * ax_ip1 * ay_jp1
      E_Y = EY(i,j) * ax_i * ay_j + EY(i+1,j) * ax_ip1 * ay_j + EY(i,j+1) * ax_i * ay_jp1 + EY(i+1,j+1) * ax_ip1 * ay_jp1
-     IF (electrons_sense_E_ext) THEN
-       E_Z = Eze(electron(k)%X, electron(k)%Y)
-       E_X = E_X + Exe(electron(k)%X, electron(k)%Y)
-       E_Y = E_Y + Eye(electron(k)%X, electron(k)%Y)  
-     ELSE
-       E_Z = 0.0_8
-     END IF
+     E_Z = Ez(electron(k)%X, electron(k)%Y)
 
      B_X = BX_grid(i,j) * ax_i * ay_j + BX_grid(i+1,j) * ax_ip1 * ay_j + BX_grid(i,j+1) * ax_i * ay_jp1 + BX_grid(i+1,j+1) * ax_ip1 * ay_jp1
      B_Y = BY_grid(i,j) * ax_i * ay_j + BY_grid(i+1,j) * ax_ip1 * ay_j + BY_grid(i,j+1) * ax_i * ay_jp1 + BY_grid(i+1,j+1) * ax_ip1 * ay_jp1
