@@ -509,7 +509,7 @@ SUBROUTINE THERMALIZE_ION(s, x, y, vx, vy, vz, tag, myobject, m, dirflag)
    !  USE ParallelOperationValues
      USE ClusterAndItsBoundaries
      USE CurrentProblemValues
-     USE IonParticles, ONLY: init_Ti_eV
+     USE IonParticles, ONLY: init_Ti_eV, Ms
    
      USE rng_wrapper
    
@@ -540,7 +540,9 @@ SUBROUTINE THERMALIZE_ION(s, x, y, vx, vy, vz, tag, myobject, m, dirflag)
      
 
      ! Set temperature of Maxwellian: as at t = 0
-     factor_convert = SQRT(init_Ti_eV(s)/ T_e_eV) / N_max_vel
+   !   factor_convert = SQRT(init_Ti_eV(s)/ T_e_eV) / N_max_vel
+     factor_convert = SQRT(init_Ti_eV(s) / T_e_eV) / (N_max_vel * SQRT(Ms(s)))
+
 
      ! Prepare velocity reset 
      CALL GetMaxwellVelocity(v_maxwell_1)
@@ -558,7 +560,7 @@ SUBROUTINE THERMALIZE_ION(s, x, y, vx, vy, vz, tag, myobject, m, dirflag)
            y_new = y
            vx_new = v_half_maxwell * factor_convert 
            vy_new = v_maxwell_1 * factor_convert 
-           vz_new = 0.0_8
+           vz_new = v_maxwell_2 * factor_convert 
            tag_new = myobject%object_id_number
    
         ELSE IF (dirflag.EQ.2) THEN
@@ -567,7 +569,7 @@ SUBROUTINE THERMALIZE_ION(s, x, y, vx, vy, vz, tag, myobject, m, dirflag)
            y_new = DBLE(c_indx_y_max) - 1.0d-6 
            vx_new =  v_maxwell_1 * factor_convert
            vy_new = -v_half_maxwell * factor_convert 
-           vz_new = 0.0_8
+           vz_new = v_maxwell_2 * factor_convert 
            tag_new = myobject%object_id_number
    
         ELSE IF (dirflag.EQ.3) THEN
@@ -576,7 +578,7 @@ SUBROUTINE THERMALIZE_ION(s, x, y, vx, vy, vz, tag, myobject, m, dirflag)
            y_new = y
            vx_new = -v_half_maxwell * factor_convert 
            vy_new = v_maxwell_1 * factor_convert 
-           vz_new = 0.0_8
+           vz_new = v_maxwell_2 * factor_convert 
            tag_new = myobject%object_id_number
    
         ELSE IF (dirflag.EQ.4) THEN
@@ -585,7 +587,7 @@ SUBROUTINE THERMALIZE_ION(s, x, y, vx, vy, vz, tag, myobject, m, dirflag)
            y_new = DBLE(c_indx_y_min) + 1.0d-6 
            vx_new = v_maxwell_1 * factor_convert 
            vy_new = v_half_maxwell * factor_convert 
-           vz_new = 0.0_8
+           vz_new = v_maxwell_2 * factor_convert 
            tag_new = myobject%object_id_number
    
         END IF   ! IF (dirflag.EQ.1) THEN
@@ -599,7 +601,7 @@ SUBROUTINE THERMALIZE_ION(s, x, y, vx, vy, vz, tag, myobject, m, dirflag)
            y_new = y
            vx_new = v_half_maxwell * factor_convert 
            vy_new = v_maxwell_1 * factor_convert 
-           vz_new = 0.0_8
+           vz_new = v_maxwell_2 * factor_convert 
            tag_new = myobject%object_id_number
    
         ELSE IF (dirflag.EQ.2) THEN
@@ -608,7 +610,7 @@ SUBROUTINE THERMALIZE_ION(s, x, y, vx, vy, vz, tag, myobject, m, dirflag)
            y_new = myobject%ymin - 1.0d-6 
            vx_new =  v_maxwell_1 * factor_convert 
            vy_new = -v_half_maxwell * factor_convert 
-           vz_new = 0.0_8
+           vz_new = v_maxwell_2 * factor_convert 
            tag_new = myobject%object_id_number
    
         ELSE IF (dirflag.EQ.3) THEN
@@ -617,7 +619,7 @@ SUBROUTINE THERMALIZE_ION(s, x, y, vx, vy, vz, tag, myobject, m, dirflag)
            y_new = y
            vx_new = -v_half_maxwell * factor_convert 
            vy_new = v_maxwell_1 * factor_convert 
-           vz_new = 0.0_8
+           vz_new = v_maxwell_2 * factor_convert 
            tag_new = myobject%object_id_number
    
         ELSE IF (dirflag.EQ.4) THEN
@@ -626,7 +628,7 @@ SUBROUTINE THERMALIZE_ION(s, x, y, vx, vy, vz, tag, myobject, m, dirflag)
            y_new = myobject%ymax + 1.0d-6 
            vx_new = v_maxwell_1 * factor_convert 
            vy_new = v_half_maxwell * factor_convert 
-           vz_new = 0.0_8
+           vz_new = v_maxwell_2 * factor_convert 
            tag_new = myobject%object_id_number
    
         END IF   ! IF (dirflag.EQ.1) THEN

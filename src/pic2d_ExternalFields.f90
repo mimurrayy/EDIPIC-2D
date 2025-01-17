@@ -5,7 +5,8 @@ SUBROUTINE PREPARE_EXTERNAL_FIELDS
   USE ParallelOperationValues
   USE ExternalFields
   USE CurrentProblemValues, ONLY : E_scale_Vm, B_scale_T, delta_x_m, global_maximal_j, pi, mu_0_Hm
-  USE IonParticles, ONLY : ions_sense_magnetic_field, ions_sense_EZ
+  USE IonParticles, ONLY : ions_sense_magnetic_field, ions_sense_E_ext
+  USE ElectronParticles, ONLY : electrons_sense_E_ext
   USE BlockAndItsBoundaries, ONLY: work_dir_partition_and_fields_files
 
   IMPLICIT NONE
@@ -19,14 +20,14 @@ SUBROUTINE PREPARE_EXTERNAL_FIELDS
   INTEGER request
 
   CHARACTER(1) buf
-  INTEGER ions_sense_magnetic_field_flag, ions_sense_EZ_flag
+  INTEGER ions_sense_magnetic_field_flag, ions_sense_E_flag, electrons_sense_E_flag
   INTEGER j
 
   INTEGER ALLOC_ERR
   INTEGER n
 
 ! functions
-  REAL(8) Bx, By, Bz, Ez
+  REAL(8) Bx, By, Bz, Exe, Eye, Eze
 
   INQUIRE (FILE = 'init_extfields.dat', EXIST = exists)
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
@@ -61,13 +62,18 @@ SUBROUTINE PREPARE_EXTERNAL_FIELDS
      READ (9, '(A1)') buf !"---ddddd.ddd--- characteristic length of decay for y>y_Bmax [cm]")')
      READ (9, '(3x,f9.3)') half_over_sigma2_2
 
+     READ (9, '(A1)') buf !"---ddddd.ddd--- X-electric field [V/cm]")')
+     READ (9, '(3x,f9.3)') Ex_ext
+     READ (9, '(A1)') buf !"---ddddd.ddd--- Y-electric field [V/cm]")')
+     READ (9, '(3x,f9.3)') Ey_ext
      READ (9, '(A1)') buf !"---ddddd.ddd--- Z-electric field [V/cm]")')
      READ (9, '(3x,f9.3)') Ez_ext
      READ (9, '(A1)') buf !"-------d------- ions sense magnetic field [1=Yes, 0=No]")')
      READ (9, '(7x,i1)') ions_sense_magnetic_field_flag
-     READ (9, '(A1)') buf !"-------d------- ions sense Z-electric field [1=Yes, 0=No]")')
-     READ (9, '(7x,i1)') ions_sense_EZ_flag
-
+     READ (9, '(A1)') buf !"-------d------- ions sense electric field [1=Yes, 0=No]")')
+     READ (9, '(7x,i1)') ions_sense_E_flag
+     READ (9, '(A1)') buf !"-------d------- electrons sense electric field [1=Yes, 0=No]")')
+     READ (9, '(7x,i1)') electrons_sense_E_flag
      CLOSE (9, STATUS = 'KEEP')
 
 !B_ext = 1.0d-4 * 100.0_8 / B_scale_T !################  100 Gauss = 0.01 Tesla
@@ -111,6 +117,8 @@ SUBROUTINE PREPARE_EXTERNAL_FIELDS
         PRINT '("Process 0 created file external_Bz_vs_y.dat")'
      END IF
 
+     Ex_ext = Ex_ext * 100.0_8 / E_scale_Vm
+     Ey_ext = Ey_ext * 100.0_8 / E_scale_Vm
      Ez_ext = Ez_ext * 100.0_8 / E_scale_Vm
 
      IF (ions_sense_magnetic_field_flag.EQ.0) THEN
@@ -119,10 +127,10 @@ SUBROUTINE PREPARE_EXTERNAL_FIELDS
         ions_sense_magnetic_field = .TRUE.
      END IF
 
-     IF (ions_sense_EZ_flag.EQ.0) THEN
-        ions_sense_EZ = .FALSE.
+     IF (ions_sense_E_flag.EQ.0) THEN
+         ions_sense_E_ext = .FALSE.
      ELSE
-        ions_sense_EZ = .TRUE.
+         ions_sense_E_ext = .TRUE.
      END IF
 
   ELSE
@@ -140,10 +148,12 @@ SUBROUTINE PREPARE_EXTERNAL_FIELDS
      half_over_sigma2_1 = 0.0_8
      half_over_sigma2_2 = 0.0_8
 
+     Ex_ext = 0.0_8
+     Ey_ext = 0.0_8
      Ez_ext = 0.0_8
 
      ions_sense_magnetic_field = .FALSE.
-     ions_sense_EZ = .FALSE.
+     ions_sense_E_ext = .FALSE.
 
   END IF
 
@@ -333,7 +343,7 @@ END FUNCTION Bz
 
 !----------------------
 !
-REAL(8) FUNCTION Ez(x, y)
+REAL(8) FUNCTION Exe(x, y)
 
   USE ExternalFields
 
@@ -341,6 +351,32 @@ REAL(8) FUNCTION Ez(x, y)
 
   REAL(8) x, y
 
-  Ez = Ez_ext
+  Exe = Ex_ext
 
-END FUNCTION Ez
+END FUNCTION Exe
+
+
+REAL(8) FUNCTION Eye(x, y)
+
+  USE ExternalFields
+
+  IMPLICIT NONE
+
+  REAL(8) x, y
+
+  Eye = Ey_ext
+
+END FUNCTION Eye
+
+
+REAL(8) FUNCTION Eze(x, y)
+
+  USE ExternalFields
+
+  IMPLICIT NONE
+
+  REAL(8) x, y
+
+  Eze = Ez_ext
+
+END FUNCTION Eze
