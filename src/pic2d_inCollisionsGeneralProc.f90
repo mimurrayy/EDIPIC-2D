@@ -107,7 +107,7 @@ SUBROUTINE INITIATE_in_COLL_DIAGNOSTICS
 
   LOGICAL exists
   CHARACTER(1) buf
-  INTEGER i_dummy
+  INTEGER i_dummy, ios
 
   INTERFACE
      FUNCTION convert_int_to_txt_string(int_number, length_of_string)
@@ -136,22 +136,28 @@ SUBROUTINE INITIATE_in_COLL_DIAGNOSTICS
         INQUIRE (FILE = historycoll_filename, EXIST = exists)
         IF (exists) THEN                                                       
            OPEN (21, FILE = historycoll_filename, STATUS = 'OLD')          
-! skip header
+            ! skip header
            READ (21, '(A1)') buf ! WRITE (21, '("# electron time step is ",e14.7," s")'), delta_t_s
            READ (21, '(A1)') buf ! WRITE (21, '("#      ion time step is ",e14.7," s")'), delta_t_s * N_subcycles
            READ (21, '(A1)') buf ! WRITE (21, '("# column  1 is the electron step counter")')
            READ (21, '(A1)') buf ! WRITE (21, '("# column  2 is the total number of ion macroparticles of species SS in the whole system")')
            READ (21, '(A1)') buf ! WRITE (21, '("# column  3 is the number of rezonance charge exchange collision events during past ion time step")')
 
-           DO i = 1, Start_T_cntr / N_subcycles            ! these files are updated at every ion timestep
-              READ (21, '(2x,i9,2x,i9,2x,i8)') i_dummy
-           END DO
+            DO
+               READ (21, '(2x,i9,2x,i9,2x,i8)', iostat = ios) i_dummy
+               IF (ios.NE.0) EXIT
+               IF (i_dummy.GE.Start_T_cntr) EXIT
+            ENDDO
+            BACKSPACE(21)            
+         !   DO i = 1, Start_T_cntr / N_subcycles            ! these files are updated at every ion timestep
+         !      READ (21, '(2x,i9,2x,i9,2x,i8)') i_dummy
+         !   END DO
            ENDFILE 21       
            CLOSE (21, STATUS = 'KEEP')
         ELSE
 
            OPEN  (21, FILE = historycoll_filename, STATUS = 'REPLACE')
-! save header, for now resonance charge exchange only
+            ! save header, for now resonance charge exchange only
            WRITE (21, '("# electron time step is ",e14.7," s")') delta_t_s
            WRITE (21, '("#      ion time step is ",e14.7," s")') delta_t_s * N_subcycles
            WRITE (21, '("# column  1 is the electron step counter")')
@@ -164,28 +170,28 @@ SUBROUTINE INITIATE_in_COLL_DIAGNOSTICS
      END DO
 
   ELSE
-! fresh start - create empty files with a header
+   ! fresh start - create empty files with a header
 
-     DO s = 1, N_spec
-        IF (.NOT.collision_rcx(s)%rcx_on) CYCLE
-    
-        n = collision_rcx(s)%neutral_species_index
+         DO s = 1, N_spec
+            IF (.NOT.collision_rcx(s)%rcx_on) CYCLE
+         
+            n = collision_rcx(s)%neutral_species_index
 
-        historycoll_filename = 'history_coll_i_S_n_AAAAAA.dat'
-        historycoll_filename(16:16) = convert_int_to_txt_string(s, 1)
-        historycoll_filename(20:25) = neutral(n)%name
+            historycoll_filename = 'history_coll_i_S_n_AAAAAA.dat'
+            historycoll_filename(16:16) = convert_int_to_txt_string(s, 1)
+            historycoll_filename(20:25) = neutral(n)%name
 
-        OPEN  (21, FILE = historycoll_filename, STATUS = 'REPLACE')
-! save header, for now resonance charge exchange only
-        WRITE (21, '("# electron time step is ",e14.7," s")') delta_t_s
-        WRITE (21, '("#      ion time step is ",e14.7," s")') delta_t_s * N_subcycles
-        WRITE (21, '("# column  1 is the electron step counter")')
-        WRITE (21, '("# column  2 is the total number of ion macroparticles of species ",i2," in the whole system")') s
-        WRITE (21, '("# column  3 is the number of rezonance charge exchange collision events during past ion time step")')
-        CLOSE (21, STATUS = 'KEEP')
+            OPEN  (21, FILE = historycoll_filename, STATUS = 'REPLACE')
+               ! save header, for now resonance charge exchange only
+            WRITE (21, '("# electron time step is ",e14.7," s")') delta_t_s
+            WRITE (21, '("#      ion time step is ",e14.7," s")') delta_t_s * N_subcycles
+            WRITE (21, '("# column  1 is the electron step counter")')
+            WRITE (21, '("# column  2 is the total number of ion macroparticles of species ",i2," in the whole system")') s
+            WRITE (21, '("# column  3 is the number of rezonance charge exchange collision events during past ion time step")')
+            CLOSE (21, STATUS = 'KEEP')
 
-     END DO
-
+         END DO
+      
   END IF
 
 END SUBROUTINE INITIATE_in_COLL_DIAGNOSTICS
@@ -198,6 +204,7 @@ SUBROUTINE SAVE_in_COLLISIONS
   USE MCCollisions
   USE IonParticles, ONLY : N_spec, N_ions
   USE CurrentProblemValues, ONLY : T_cntr, debug_level
+  USE AvgSnapshots, ONLY: avg_flux_and_history, current_avgsnap
 
   IMPLICIT NONE
 
@@ -215,6 +222,7 @@ SUBROUTINE SAVE_in_COLLISIONS
                                       ! ----x----I----x----I----x----
   CHARACTER(29) historycoll_filename  ! history_coll_i_S_n_AAAAAA.dat
   INTEGER :: local_debug_level
+  INTEGER :: avg_output_flag
 
   INTERFACE
      FUNCTION convert_int_to_txt_string(int_number, length_of_string)
@@ -227,6 +235,11 @@ SUBROUTINE SAVE_in_COLLISIONS
   local_debug_level = 3
 
   IF (no_rcx_collisions) RETURN
+
+   IF (avg_flux_and_history) THEN
+      CALL DETERMINE_AVG_DATA_CREATION(avg_output_flag)
+      IF (avg_output_flag==0) RETURN
+   END IF  
 
 ! report all collision counters to the process with zero global rank
 

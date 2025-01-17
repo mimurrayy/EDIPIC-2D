@@ -62,8 +62,11 @@ SUBROUTINE PREPARE_SETUP_VALUES
 
      whole_object(n)%potential_must_be_solved = .FALSE.
 
+     whole_object(n)%N_objects_connected_to_it = 0
+
      initbo_filename = 'init_bo_NN.dat'
      initbo_filename(9:10) = convert_int_to_txt_string(n, 2)
+     
 
      INQUIRE (FILE = initbo_filename, EXIST = exists)
      IF (.NOT.exists) THEN
@@ -101,6 +104,7 @@ SUBROUTINE PREPARE_SETUP_VALUES
      CLOSE (9, STATUS = 'KEEP')
 
      CALL LOAD_CUSTOMIZED_WAVEFORM(n,initbo_filename)
+     
 
      IF (whole_object(n)%model_constant_emit.EQ.0) THEN
 ! thermal emission
@@ -145,7 +149,122 @@ SUBROUTINE PREPARE_SETUP_VALUES
 
   CALL PREPARE_EXTERNAL_CIRCUIT
 
+   DO n = 1, N_of_boundary_and_inner_objects
+      initbo_filename = 'init_bo_NN.dat'
+      initbo_filename(9:10) = convert_int_to_txt_string(n, 2)   
+      CALL LOAD_ADDITIONAL_INFO(n,initbo_filename)
+   END DO
+
 END SUBROUTINE PREPARE_SETUP_VALUES
+
+!--------------------------------------------------------------------------------------------------
+!     SUBROUTINE LOAD_ADDITIONAL_INFO
+!>    @details Load additional information, including connection with metallic part linked to external circuit
+!!    @authors W. Villafana
+!!    @date    Nov-19-2024
+!-------------------------------------------------------------------------------------------------- 
+SUBROUTINE LOAD_ADDITIONAL_INFO ( n,file_name_bo )
+      
+   USE CurrentProblemValues, ONLY: whole_object, string_length,zero, F_scale_V, delta_t_s, N_of_boundary_and_inner_objects
+   USE mod_print, ONLY: print_debug,print_message,print_parser_error
+   USE array_utils, ONLY: increase_array_size
+   IMPLICIT NONE
+
+   !IN/OUT
+   INTEGER, INTENT(IN) :: n ! number of bo file name 
+   CHARACTER(14), INTENT(IN) :: file_name_bo
+
+   ! LOCAL
+   CHARACTER(LEN=string_length) :: routine, message
+   INTEGER :: local_debug_level, ierr
+   LOGICAL :: exists
+   CHARACTER(LEN=string_length) :: long_buf,line,separator ! long   buffer for    string
+   CHARACTER(LEN=string_length) :: caval                   ! buffer for    string values
+   INTEGER :: i_found ! flag   to  decide  if I found keyword or not.
+   REAL(8) :: rval    ! buffer for real    values
+   INTEGER :: ival    ! buffer for integer values
+   INTEGER :: i_connected_to_other_boundary ! Is the current boundary connected to another boundary, itself connecgted to an external circuit
+   INTEGER :: connected_object ! object number connect to present (n) object
+
+   ! Defautl values
+   local_debug_level = 1
+
+   routine = 'LOAD_ADDITIONAL_INFO'
+   CALL print_debug(routine,local_debug_level)
+   
+   ! Open bo file and determine of any wave forms must be loaded
+   INQUIRE (FILE = file_name_bo, EXIST = exists)
+   IF (exists) THEN
+
+      OPEN (9, file=file_name_bo)
+      i_found = 0
+      REWIND(9)
+      DO
+         READ (9,"(A)",iostat=ierr) line ! read line into character variable
+         IF ( ierr/=0 .OR. i_found==1 ) EXIT
+         IF (line == '') CYCLE   ! Skip the rest of the loop if the line is empty. Will cause a crash
+         READ (line,*) long_buf ! read first word of line
+         IF ( TRIM(long_buf)=="is_indirectly_connected_to_circuit" ) THEN ! found search string at beginning of line
+            i_found = 1
+            READ (line,*) long_buf,separator,caval                    
+            IF ( TRIM(caval)=="yes" ) THEN
+               i_connected_to_other_boundary = 1
+               WRITE( message,'(A,I2,A)') "Boundary object ",n," is connected to another boundary, which is connected to an external circuit"
+               CALL print_message( message,routine )
+            ELSE IF ( TRIM(caval)=="no" ) THEN
+               i_connected_to_other_boundary = 0
+               WRITE( message,'(A,I2,A)') "Boundary object ",n," is NOT connected to another boundary"//achar(10)
+               CALL print_message( message,routine )
+            ELSE
+               WRITE( message,'(A,I2,A,A)') 'You must specify "yes" or "no" if is_indirectly_connected_to_circuit is used for boundary object ',n,'. Received: ',TRIM(caval),achar(10)
+               CALL print_parser_error( message )
+            END IF
+         END IF
+      END DO
+      IF ( i_found==0 ) THEN
+         i_connected_to_other_boundary = 0
+         WRITE( message,'(A,I2,A)') "is_indirectly_connected_to_circuit keyword not present for boundary object ",n,". I assume we do not want it"//achar(10)
+         CALL print_message( message,routine )       
+      END IF 
+      
+      IF (i_connected_to_other_boundary==1) THEN
+
+         i_found = 0
+         REWIND(9)
+         DO
+            READ (9,"(A)",iostat=ierr) line ! read line into character variable
+            IF ( ierr/=0 .OR. i_found==1 ) EXIT
+            IF (line == '') CYCLE   ! Skip the rest of the loop if the line is empty. Will cause a crash
+            READ (line,*) long_buf ! read first word of line
+            IF ( TRIM(long_buf)=="connected_to_boundary_number" ) THEN ! found search string at beginning of line
+               i_found = 1
+               READ (line,*) long_buf,separator,ival
+               connected_object = ival
+               WRITE( message,'(A,I2,A,I2,A)') "Boundary object ",n," is connected to boundary ",connected_object,achar(10)
+               CALL print_message( message,routine )        
+               
+               IF (.NOT.whole_object(connected_object)%potential_must_be_solved) THEN
+                  WRITE( message,'(A,I2,A)') "Boundary object ",connected_object," is not connected to an external circuit."
+                  CALL print_parser_error(message)
+               END IF
+               
+               whole_object(connected_object)%N_objects_connected_to_it = whole_object(connected_object)%N_objects_connected_to_it + 1
+               CALL increase_array_size(whole_object(connected_object)%connected_object_no, whole_object(connected_object)%N_objects_connected_to_it)
+               whole_object(connected_object)%connected_object_no(whole_object(connected_object)%N_objects_connected_to_it) = n
+               
+            END IF
+         END DO
+         IF ( i_found==0 ) THEN
+            WRITE( message,'(A)') "connected_to_boundary_number keyword not present. You must use it if is_indirectly_connected_to_circuit was set to 'yes'."
+            CALL print_parser_error( message )       
+         END IF      
+         
+      END IF
+      
+      CLOSE (9, STATUS = 'KEEP')
+   END IF
+
+ END SUBROUTINE  
 
 !--------------------------------------------------------------------------------------------------
 !     SUBROUTINE LOAD_CUSTOMIZED_WAVEFORM
@@ -622,7 +741,7 @@ SUBROUTINE PREPARE_EXTERNAL_CIRCUIT
   INQUIRE (FILE = 'init_ext_circuit.dat', EXIST = exists)
   IF (.NOT.exists) RETURN
 
-  WRITE( message, '(A)'), "init_ext_circuit.dat found."//achar(10)
+  WRITE( message, '(A)') "init_ext_circuit.dat found."//achar(10)
   CALL print_message(message,routine)  
 
   OPEN (11, FILE = 'init_ext_circuit.dat')
@@ -631,23 +750,23 @@ SUBROUTINE PREPARE_EXTERNAL_CIRCUIT
 
    SELECT CASE (circuit_type)
       CASE (1)
-         WRITE( message, '(A)'), "Selected circuit: capacitively coupled voltage source."//achar(10)
+         WRITE( message, '(A)') "Selected circuit: capacitively coupled voltage source."//achar(10)
          CALL print_message(message)  
       CASE (2)
-         WRITE( message, '(A)'), "Selected circuit: floating conductor or a conductor with ext. current."//achar(10)
+         WRITE( message, '(A)') "Selected circuit: floating conductor or a conductor with ext. current."//achar(10)
          CALL print_message(message)  
       CASE (3)
-         WRITE( message, '(A)'), "Selected circuit: two floating conductors."//achar(10)
+         WRITE( message, '(A)') "Selected circuit: two floating conductors."//achar(10)
          CALL print_message(message)  
       CASE DEFAULT
-         WRITE( message, '(A,I0)'), "Nonexistent circuit selected: I expect 1, 2, 3. Received: .",circuit_type
+         WRITE( message, '(A,I0)') "Nonexistent circuit selected: I expect 1, 2, 3. Received: .",circuit_type
          CALL print_parser_error(message)           
    END SELECT         
 
   READ (11, '(A1)') buf   ! total number of electrodes whose potential must be solved (>0, if <=0 then no external circuit)
   READ (11, *) N_of_object_potentials_to_solve
 
-  WRITE( message, '(A,I0)'), "Number of potentials to solve: ",N_of_object_potentials_to_solve
+  WRITE( message, '(A,I0)') "Number of potentials to solve: ",N_of_object_potentials_to_solve
   CALL print_message(message)  
 
   IF (N_of_object_potentials_to_solve.LE.0) THEN
@@ -670,24 +789,25 @@ SUBROUTINE PREPARE_EXTERNAL_CIRCUIT
         STOP
      END IF
      IF (whole_object(ntemp)%object_type.NE.METAL_WALL) THEN
+      print*,'type is ',whole_object(ntemp)%object_type
         PRINT '("error-2 while reading init_ext_circuit.dat, object ",i3," is not metal")', ntemp
         STOP
      END IF
      whole_object(ntemp)%potential_must_be_solved = .TRUE.
      object_charge_calculation(nn)%noi = ntemp
-     WRITE( message, '(A,I0)'), "Object number to solve: ",ntemp
+     WRITE( message, '(A,I0)') "Object number to solve: ",ntemp
      CALL print_message(message)       
   END DO
   
 !--- power supplies
-  WRITE( message, '(A)'), ""
+  WRITE( message, '(A)') ""
   CALL print_message(message)   
 
   READ (11, '(A1)') buf   ! number of power supplies in the external circuit (0 if there is no power supply)
   READ (11, *) N_of_power_supplies
 ! just in case
   N_of_power_supplies = MAX(0, N_of_power_supplies)
-  WRITE( message, '(A,I0)'), "Number of power supplies (tension source): ",N_of_power_supplies
+  WRITE( message, '(A,I0)') "Number of power supplies (tension source): ",N_of_power_supplies
   CALL print_message(message)     
 
   IF (N_of_power_supplies.GT.0) ALLOCATE(EC_power_supply(1:N_of_power_supplies), STAT = ALLOC_ERR)
@@ -695,18 +815,18 @@ SUBROUTINE PREPARE_EXTERNAL_CIRCUIT
   READ (11, '(A1)') buf   ! below, for each power supply, provide constant voltage [V], amplitude [V], frequency [Hz], and phase [deg] of harmonic sin(omega*t+phase) voltage oscillations 
 
   DO n = 1, N_of_power_supplies
-      WRITE( message, '(A,I0)'), "Tension source #: ",n
+      WRITE( message, '(A,I0)') "Tension source #: ",n
       CALL print_message(message)        
      READ (11, *) EC_power_supply(n)%phi_const, EC_power_supply(n)%phi_var, EC_power_supply(n)%omega, EC_power_supply(n)%phase
      EC_power_supply(n)%phi_const = EC_power_supply(n)%phi_const / F_scale_V
      EC_power_supply(n)%phi_var   = EC_power_supply(n)%phi_var / F_scale_V
      EC_power_supply(n)%omega     = EC_power_supply(n)%omega * 2.0_8 * pi * delta_t_s
      EC_power_supply(n)%phase     = EC_power_supply(n)%phase * pi / 180.0_8
-     WRITE( message, '(A,ES10.3,A,ES10.3,A,ES10.3,A,ES10.3,A)'), "phi_const = ",EC_power_supply(n)%phi_const,"[V], phi_var = ",EC_power_supply(n)%phi_var,"[V], omega = ",EC_power_supply(n)%omega," [Hz], phase = ",EC_power_supply(n)%phase," [deg]."
+     WRITE( message, '(A,ES10.3,A,ES10.3,A,ES10.3,A,ES10.3,A)') "phi_const = ",EC_power_supply(n)%phi_const,"[V], phi_var = ",EC_power_supply(n)%phi_var,"[V], omega = ",EC_power_supply(n)%omega," [Hz], phase = ",EC_power_supply(n)%phase," [deg]."
      CALL print_message(message)
   END DO
 
-  WRITE( message, '(A)'), ""
+  WRITE( message, '(A)') ""
   CALL print_message(message)   
 
 !--- external currents
@@ -717,10 +837,10 @@ SUBROUTINE PREPARE_EXTERNAL_CIRCUIT
      J_ext = 0.0_8
      
      DO nn = 1, N_of_object_potentials_to_solve
-         WRITE( message, '(A,I0)'), "Current source #: ",nn
+         WRITE( message, '(A,I0)') "Current source #: ",nn
          CALL print_message(message)
         READ (11, *) J_ext(nn) ! current in the units of A/m (per unit length in z direction). Equivalently this is a current assuming the off plane surface is 1m wide. I should always treat this as a current 
-        WRITE( message, '(A,ES10.3,A)'), "Current source = ",J_ext(nn)," [A]"
+        WRITE( message, '(A,ES10.3,A)') "Current source = ",J_ext(nn)," [A]"
         CALL print_message(message)
       END DO
      IF (i_cylindrical==0) THEN   
@@ -739,7 +859,7 @@ SUBROUTINE PREPARE_EXTERNAL_CIRCUIT
      END IF
      J_ext = J_ext * coeff_J
 
-     WRITE( message, '(A)'), ""
+     WRITE( message, '(A)') ""
      CALL print_message(message)        
   END IF     
 
@@ -747,63 +867,63 @@ SUBROUTINE PREPARE_EXTERNAL_CIRCUIT
 
   READ (11, '(A1)') buf   ! number of resistors (0 if there are no resistors)
   READ (11, *) N_of_resistors
-  WRITE( message, '(A,I0)'), "Number of resistors: ",N_of_resistors
+  WRITE( message, '(A,I0)') "Number of resistors: ",N_of_resistors
   CALL print_message(message)       
 
   IF (N_of_resistors.GT.0) ALLOCATE(resistor_R_Ohm(1:N_of_resistors), STAT = ALLOC_ERR)
 
   READ (11, '(A1)') buf   ! below, for each resistor, provide its resistance [Ohm]
   DO n = 1, N_of_resistors
-      WRITE( message, '(A,I0)'), "Resistor #: ",n
+      WRITE( message, '(A,I0)') "Resistor #: ",n
       CALL print_message(message)   
      READ (11, *) resistor_R_Ohm(n)
-      WRITE( message, '(A,ES10.3,A)'), "R = ",resistor_R_Ohm," [Ohm]"
+      WRITE( message, '(A,ES10.3,A)') "R = ",resistor_R_Ohm," [Ohm]"
       CALL print_message(message)     
   END DO
 
-  WRITE( message, '(A)'), ""
+  WRITE( message, '(A)') ""
   CALL print_message(message)     
 
 !--- capacitors
 
   READ (11, '(A1)') buf   ! number of capacitors (0 if there are no capacitors)
   READ (11, *) N_of_capacitors
-  WRITE( message, '(A,I0)'), "Number of capacitors: ",N_of_capacitors
+  WRITE( message, '(A,I0)') "Number of capacitors: ",N_of_capacitors
   CALL print_message(message)     
 
   IF (N_of_capacitors.GT.0) ALLOCATE(capacitor_C_F(1:N_of_capacitors), STAT = ALLOC_ERR)
 
   READ (11, '(A1)') buf   ! below, for each capacitor, provide its capacitance [Farade]
   DO n = 1, N_of_capacitors
-      WRITE( message, '(A,I0)'), "Capacitor #: ",n
+      WRITE( message, '(A,I0)') "Capacitor #: ",n
       CALL print_message(message)      
      READ (11, *) capacitor_C_F(n)
-     WRITE( message, '(A,ES10.3,A)'), "C = ",capacitor_C_F," [F]"
+     WRITE( message, '(A,ES10.3,A)') "C = ",capacitor_C_F," [F]"
      CALL print_message(message)         
   END DO
 
-  WRITE( message, '(A)'), ""
+  WRITE( message, '(A)') ""
   CALL print_message(message)    
 
 !--- inductors
 
   READ (11, '(A1)') buf   ! number of inductors (0 if there are no inductors)
   READ (11, *) N_of_inductors
-  WRITE( message, '(A,I0)'), "Number of inductors: ",N_of_inductors
+  WRITE( message, '(A,I0)') "Number of inductors: ",N_of_inductors
   CALL print_message(message)   
 
   IF (N_of_inductors.GT.0) ALLOCATE(inductor_L_H(1:N_of_inductors), STAT = ALLOC_ERR)
 
   READ (11, '(A1)') buf   ! below, for each inductor, provide its inductance [Henry]
   DO n = 1, N_of_inductors
-      WRITE( message, '(A,I0)'), "Inductor #: ",n
+      WRITE( message, '(A,I0)') "Inductor #: ",n
       CALL print_message(message)    
      READ (11, *) inductor_L_H(n)
-     WRITE( message, '(A,ES10.3,A)'), "L = ",inductor_L_H," [H]"
+     WRITE( message, '(A,ES10.3,A)') "L = ",inductor_L_H," [H]"
      CALL print_message(message)        
   END DO
 
-  WRITE( message, '(A)'), ""
+  WRITE( message, '(A)') ""
   CALL print_message(message)     
 
   CLOSE (11, STATUS = 'KEEP')
@@ -822,6 +942,10 @@ SUBROUTINE PREPARE_EXTERNAL_CIRCUIT
   DO nn = 1, N_of_object_potentials_to_solve
      potential_of_object(nn) = ECPS_Voltage(1, 0) !source_U * SIN(source_phase)
   END DO
+  potential_of_object_avg = zero
+  charge_of_object_avg = zero
+  dQ_full_avg = zero
+  dQ_plasma_of_object_avg = zero
   RETURN
 
 END SUBROUTINE PREPARE_EXTERNAL_CIRCUIT
@@ -836,12 +960,13 @@ SUBROUTINE INITIATE_EXT_CIRCUIT_DIAGNOSTICS
 !  USE Diagnostics, ONLY : N_of_saved_records
   USE SetupValues, ONLY : ht_use_e_emission_from_cathode, ht_use_e_emission_from_cathode_zerogradf, ht_emission_constant
   USE ExternalCircuit, ONLY : N_of_object_potentials_to_solve
+  USE AvgSnapshots, ONLY: avg_flux_and_history
 
   IMPLICIT NONE
 
   LOGICAL exists
   INTEGER i
-  INTEGER i_dummy
+  INTEGER i_dummy, ios
 
   IF (Rank_of_process.NE.0) RETURN
 
@@ -849,26 +974,54 @@ SUBROUTINE INITIATE_EXT_CIRCUIT_DIAGNOSTICS
 
   IF (N_of_object_potentials_to_solve.LE.0) RETURN
 
-  IF (use_checkpoint.EQ.1) THEN
-! start from checkpoint, must trim the time dependences
+   IF (use_checkpoint.EQ.1) THEN
+   ! start from checkpoint, must trim the time dependences
 
-     INQUIRE (FILE = 'history_ext_circuit.dat', EXIST = exists)
-     IF (exists) THEN                                                       
-        OPEN (21, FILE = 'history_ext_circuit.dat', STATUS = 'OLD')          
-        DO i = 1, Start_T_cntr   !N_of_saved_records             ! these files are updated at every electron timestep
-           READ (21, '(2x,i9,8(2x,e14.7))') i_dummy
-        END DO
-        ENDFILE 21       
-        CLOSE (21, STATUS = 'KEEP')        
-     END IF
+      IF (avg_flux_and_history) THEN
+         INQUIRE (FILE = 'history_ext_circuit_avg.dat', EXIST = exists)
+         IF (exists) THEN                                                       
+            OPEN (21, FILE = 'history_ext_circuit_avg.dat', STATUS = 'OLD')          
+            DO 
+               READ (21, '(2x,i9,8(2x,e14.7))', iostat = ios) i_dummy
+               IF (ios.NE.0) EXIT
+               IF (i_dummy.GE.Start_T_cntr) EXIT
+            END DO
+            BACKSPACE(21) ! Backspace is restored. I can safely eliminate last poitn because it should be recomputed as checkpoint automatically restarts at start of average window
+            ENDFILE 21   
+            ! DO i = 1, Start_T_cntr   !N_of_saved_records             ! these files are updated at every electron timestep
+            !    READ (21, '(2x,i9,8(2x,e14.7))') i_dummy
+            ! END DO
+            ! ENDFILE 21       
+            CLOSE (21, STATUS = 'KEEP')        
+         ELSE
+            OPEN  (21, FILE = 'history_ext_circuit_avg.dat', STATUS = 'REPLACE')          
+            CLOSE (21, STATUS = 'KEEP')  
+         END IF
+      ELSE
 
-  ELSE
-! fresh start, empty files, clean up whatever garbage there might be
-
-     OPEN  (21, FILE = 'history_ext_circuit.dat', STATUS = 'REPLACE')          
-     CLOSE (21, STATUS = 'KEEP')
-
-  END IF
+         INQUIRE (FILE = 'history_ext_circuit.dat', EXIST = exists)
+         IF (exists) THEN                                                       
+            OPEN (21, FILE = 'history_ext_circuit.dat', STATUS = 'OLD')          
+            DO i = 1, Start_T_cntr   !N_of_saved_records             ! these files are updated at every electron timestep
+               READ (21, '(2x,i9,8(2x,e14.7))') i_dummy
+            END DO
+            ENDFILE 21       
+            CLOSE (21, STATUS = 'KEEP')        
+         ELSE
+            OPEN  (21, FILE = 'history_ext_circuit.dat', STATUS = 'REPLACE')          
+            CLOSE (21, STATUS = 'KEEP')            
+         END IF
+      END IF
+   ELSE
+   ! fresh start, empty files, clean up whatever garbage there might be
+      IF (avg_flux_and_history) THEN
+         OPEN  (21, FILE = 'history_ext_circuit_avg.dat', STATUS = 'REPLACE')          
+         CLOSE (21, STATUS = 'KEEP')         
+      ELSE
+         OPEN  (21, FILE = 'history_ext_circuit.dat', STATUS = 'REPLACE')          
+         CLOSE (21, STATUS = 'KEEP')
+      END IF 
+   END IF
 
 END SUBROUTINE INITIATE_EXT_CIRCUIT_DIAGNOSTICS
 
@@ -880,7 +1033,7 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
   USE CurrentProblemValues
   USE ClusterAndItsBoundaries
   USE SetupValues
-
+  USE AvgSnapshots, ONLY: avg_flux_and_history
   USE rng_wrapper
 
   IMPLICIT NONE
@@ -900,6 +1053,8 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
   INTEGER, ALLOCATABLE :: ibuf_receive(:)
   INTEGER ALLOC_ERR
   INTEGER :: local_debug_level
+
+  INTEGER :: avg_compute_flag  
   
   local_debug_level = 2
 
@@ -1264,6 +1419,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP
      IF (Rank_of_process.EQ.0) THEN
         whole_object(1:N_of_boundary_objects)%electron_emit_count = ibuf_receive(1:N_of_boundary_objects)
 
+        IF (avg_flux_and_history) THEN 
+            CALL DECIDE_IF_COMPUTE_AVG_DATA_AFTER_RESTART(avg_compute_flag)
+            IF (avg_compute_flag==1) THEN       
+               whole_object(1:N_of_boundary_objects)%electron_emission_flux_avg_per_s = whole_object(1:N_of_boundary_objects)%electron_emission_flux_avg_per_s + &
+                                                                                                REAL(whole_object(1:N_of_boundary_objects)%electron_emit_count)
+            END IF
+         END IF        
+
         IF (debug_level>=local_debug_level) print '("electrons emitted by boundaries :: ",10(2x,i8))', whole_object(1:N_of_boundary_objects)%electron_emit_count  
 
 !! set the ion hit counters here to zero because when this subroutine is called the ions do not move
@@ -1289,6 +1452,7 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
   USE CurrentProblemValues
   USE ClusterAndItsBoundaries
   USE SetupValues
+  USE AvgSnapshots, ONLY: avg_flux_and_history
 
   USE rng_wrapper
 
@@ -1315,6 +1479,8 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
   INTEGER, ALLOCATABLE :: ibuf_send(:)
   INTEGER, ALLOCATABLE :: ibuf_receive(:)
   INTEGER ALLOC_ERR
+
+  INTEGER :: avg_compute_flag
 
   IF (N_of_inner_objects.EQ.0) RETURN
 
@@ -1863,7 +2029,14 @@ SUBROUTINE PERFORM_ELECTRON_EMISSION_SETUP_INNER_OBJECTS
   CALL MPI_REDUCE(ibuf_send, ibuf_receive, N_of_inner_objects, MPI_INTEGER, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
 
   IF (Rank_of_process.EQ.0) THEN
-     whole_object(N_of_boundary_objects+1:N_of_boundary_and_inner_objects)%electron_emit_count = ibuf_receive(1:N_of_inner_objects)
+      whole_object(N_of_boundary_objects+1:N_of_boundary_and_inner_objects)%electron_emit_count = ibuf_receive(1:N_of_inner_objects)
+      IF (avg_flux_and_history) THEN 
+         CALL DECIDE_IF_COMPUTE_AVG_DATA_AFTER_RESTART(avg_compute_flag)
+         IF (avg_compute_flag==1) THEN       
+            whole_object(N_of_boundary_objects+1:N_of_boundary_and_inner_objects)%electron_emission_flux_avg_per_s = whole_object(N_of_boundary_objects+1:N_of_boundary_and_inner_objects)%electron_emission_flux_avg_per_s + &
+                                                                                                REAL(whole_object(N_of_boundary_objects+1:N_of_boundary_and_inner_objects)%electron_emit_count)
+         END IF
+      END IF
   END IF
 
   DEALLOCATE(ibuf_send, STAT = ALLOC_ERR)

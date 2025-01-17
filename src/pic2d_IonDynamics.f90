@@ -28,10 +28,12 @@ SUBROUTINE ADVANCE_IONS
   REAL(8) :: x_cart, y_cart, z_cart ! intermediate cartesian coordinates for cylindrical 
   REAL(8) :: alpha_ang ! increment angle for azimuthal coordinate in cylindrical
   REAL(8) :: radius ! radius angle for intermediate calculation in cylindrical system
-  REAL(8) :: x_old,vx_old,vy_old
+  REAL(8) :: x_old,y_old,vx_old,vy_old
 
   INTEGER n
   LOGICAL collision_with_inner_object_occurred
+  INTEGER :: n_obj_collision
+  INTEGER :: i_flux_measure_for_ionization_source
 
 ! functions
   REAL(8) Bx, By, Bz, Exe, Eye, Eze
@@ -166,15 +168,17 @@ SUBROUTINE ADVANCE_IONS
 
         END IF
 
+        x_old =  ion(s)%part(k)%X
+        y_old =  ion(s)%part(k)%Y
         ! Cartesian case
-        IF ( i_cylindrical==0 ) THEN
+         IF ( i_cylindrical==0 ) THEN
 
             ! Advance ptcl
             ion(s)%part(k)%X = ion(s)%part(k)%X + ion(s)%part(k)%VX * N_subcycles
             ion(s)%part(k)%Y = ion(s)%part(k)%Y + ion(s)%part(k)%VY * N_subcycles
  
         ! In cyclindrical coordinates we must convert Cartesian velocities in Cylindrical form (Delzanno 2013)
-        ELSEIF ( i_cylindrical==1 ) THEN ! r_theta case ie r=X and theta=Y
+         ELSEIF ( i_cylindrical==1 ) THEN ! r_theta case ie r=X and theta=Y
  
             ! First compute intermediate position (X = radius)
             x_cart = ion(s)%part(k)%X + ion(s)%part(k)%VX * N_subcycles
@@ -203,7 +207,6 @@ SUBROUTINE ADVANCE_IONS
             radius =  SQRT( x_cart**2 + z_cart**2 )
 
             ! Remember just in case starting positions and originally computed velcoities in local Cartesian frame
-            x_old =  ion(s)%part(k)%X
             vx_old = ion(s)%part(k)%VX
             vy_old = ion(s)%part(k)%VZ                
    
@@ -232,6 +235,8 @@ SUBROUTINE ADVANCE_IONS
            END IF
         END IF
 
+        CALL MEASURE_NET_FLUX_THROUGH_PLANE_FOR_IONIZATION_SOURCE(x_old, y_old, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag, i_flux_measure_for_ionization_source)        
+
 ! check whether a collision with an inner object occurred
         collision_with_inner_object_occurred = .FALSE.
         DO n = N_of_boundary_objects+1, N_of_boundary_and_inner_objects
@@ -240,7 +245,8 @@ SUBROUTINE ADVANCE_IONS
            IF (ion(s)%part(k)%Y.LE.whole_object(n)%Ymin) CYCLE
            IF (ion(s)%part(k)%Y.GE.whole_object(n)%Ymax) CYCLE
 ! collision detected
-           CALL TRY_ION_COLL_WITH_INNER_OBJECT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag) !, whole_object(n))
+           CALL TRY_ION_COLL_WITH_INNER_OBJECT(s, ion(s)%part(k)%X, ion(s)%part(k)%Y, ion(s)%part(k)%VX, ion(s)%part(k)%VY, ion(s)%part(k)%VZ, ion(s)%part(k)%tag, n_obj_collision) !, whole_object(n))
+           IF (i_flux_measure_for_ionization_source==1) CALL CORRECT_MEASURED_FLUX_IN_DOMAIN_FOR_IONIZATION_SOURCE( n_obj_collision,x_old, y_old,  ion(s)%part(k)%X, ion(s)%part(k)%Y)
            CALL REMOVE_ION(s, k)  ! this subroutine does  N_ions(s) = N_ions(s) - 1 and k = k-1
            collision_with_inner_object_occurred = .TRUE.
            EXIT
@@ -1510,7 +1516,8 @@ SUBROUTINE FIND_INNER_OBJECT_COLL_IN_ION_ADD_LIST
   REAL(8) :: vx_new, vy_new, vz_new  
   REAL(8) xorg, yorg
   REAL(8) x, y, vx, vy, vz
-  CHARACTER(LEN=string_length) :: message, routine  
+  CHARACTER(LEN=string_length) :: message, routine 
+  INTEGER :: n_obj_collision 
 
   IF (N_of_inner_objects.EQ.0) RETURN
 
@@ -1578,7 +1585,7 @@ SUBROUTINE FIND_INNER_OBJECT_COLL_IN_ION_ADD_LIST
                                                    & ion_to_add(s)%part(k)%VX, &
                                                    & ion_to_add(s)%part(k)%VY, &
                                                    & ion_to_add(s)%part(k)%VZ, &
-                                                   & ion_to_add(s)%part(k)%tag )  !, &
+                                                   & ion_to_add(s)%part(k)%tag, n_obj_collision )  !, &
       !                                                  & whole_object(n) )
                CALL REMOVE_ION_FROM_ADD_LIST(s, k)  ! this subroutine does  N_ions_to_add(s) = N_ions_to_add(s) - 1 and k = k-1
                EXIT

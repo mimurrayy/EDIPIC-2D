@@ -5,9 +5,12 @@ SUBROUTINE INITIATE_AVERAGED_SNAPSHOTS
 
   USE ParallelOperationValues
   USE AvgSnapshots
-  USE CurrentProblemValues, ONLY : delta_t_s, N_subcycles, Start_T_cntr
+  USE CurrentProblemValues, ONLY : delta_t_s, N_subcycles, Start_T_cntr, string_length, delta_x_m
   USE Checkpoints, ONLY : use_checkpoint
   USE MCCollisions, ONLY : N_neutral_spec, collision_e_neutral, en_collisions_turned_off
+  USE mod_print, ONLY: print_parser_error
+  USE IonParticles, ONLY: N_spec
+  USE mod_print, ONLY: print_message
 
   IMPLICIT NONE
 
@@ -36,19 +39,35 @@ SUBROUTINE INITIATE_AVERAGED_SNAPSHOTS
   INTEGER T1, T2, T2prev
   INTEGER large_step
   INTEGER time_begin, time_end
+  CHARACTER(LEN=string_length) :: message, plane_name, file_name
+  INTEGER :: idx, species
+
+  INTEGER :: i_dummy
 
 ! default values ensure that if init_avgsnapshots.dat is not found 
 ! procedures COLLECT_DATA_FOR_AVERAGED_SNAPSHOT and CREATE_AVERAGED_SNAPSHOT do nothing
   N_of_all_avgsnaps = 0
   current_avgsnap = 1
   save_avg_data = .FALSE.
+  time_begin = 0
+  time_end = 0
 !  avg_data_collection_offset = -1
-
+  
+  num_plane_x_locations = 0
+  num_plane_y_locations = 0
+  save_collision_freq_ee = .FALSE.
+  avg_flux_and_history = .FALSE.
 ! read / write the data file 
   INQUIRE (FILE = 'init_avgsnapshots.dat', EXIST = exists)
 
   IF (.NOT.exists) THEN
      IF (Rank_of_process.EQ.0) PRINT '("### File init_avgsnapshots.dat not found. Time-averaged snapshots will not be created. ###")'
+   !   IF (num_plane_x_locations>0 .OR. num_plane_y_locations>0) THEN
+   !    WRITE( message, '(A,I10,A,I10,A)'), "You required either cut planes in X (NX) or Y (NY) directions to measure the flux through it.& 
+   !                                         Got NX = ",num_plane_x_locations," and NY = ",num_plane_y_locations,". &
+   !                                         You must have an init_avgsnapshots.dat file to define the time average period for the flux."//achar(10)
+   !    CALL print_parser_error(message)      
+   !   ENDIF 
      RETURN
   END IF
 
@@ -133,8 +152,8 @@ SUBROUTINE INITIATE_AVERAGED_SNAPSHOTS
 
   T2prev = -1
 
-  ALLOCATE(timestep_begin(1:9999), STAT = ALLOC_ERR)
-  ALLOCATE(timestep_end(1:9999), STAT = ALLOC_ERR)
+  ALLOCATE(timestep_begin(1:99999), STAT = ALLOC_ERR)
+  ALLOCATE(timestep_end(1:99999), STAT = ALLOC_ERR)
      
   DO i = 1, N_of_snap_groups
 ! read the parameters of current set of snapshot from the data file
@@ -162,7 +181,11 @@ SUBROUTINE INITIATE_AVERAGED_SNAPSHOTS
 
      large_step = (T2 - T1) / Rqst_n_of_snaps
      large_step = (large_step / N_subcycles) * N_subcycles
-     IF (large_step.LE.N_subcycles) CYCLE
+     IF (large_step.LE.N_subcycles) THEN
+      WRITE( message,'(A,I0,A,I0,A)') "Time step for averaged snapshots is less then the ion cycle. Reduce number of snapshots. No average snapshots will be generated: large_step =  ",large_step," vs N_subcycles",N_subcycles,achar(10)
+      CALL print_message(message)      
+      CYCLE
+     END IF
 
 ! for all possible snapshots of the current set
      DO n = 1, Rqst_n_of_snaps  !Fact_n_of_snaps
@@ -186,6 +209,8 @@ SUBROUTINE INITIATE_AVERAGED_SNAPSHOTS
 
   IF (N_of_all_avgsnaps.EQ.0) THEN
      IF (Rank_of_process.EQ.0) PRINT '("### Time-averaged snapshots will NOT be created ... ###")'
+     WRITE( message,'(A,I0,A,I0,A,I0,A,I0,A,I0,A)') "Debugging Large step = ",large_step," T1 = ",T1," and T2 = ",T2," time_begin = ",time_begin," time_end = ",time_end,achar(10)
+     CALL print_message(message)
 ! cleanup
      DEALLOCATE(timestep_begin, STAT = ALLOC_ERR)
      DEALLOCATE(timestep_end, STAT = ALLOC_ERR)
@@ -213,7 +238,7 @@ SUBROUTINE INITIATE_AVERAGED_SNAPSHOTS
      OPEN (41, FILE = '_avg_snapmoments.dat', STATUS = 'REPLACE')
      WRITE (41, '(" number   start_time(ns)   end_time(ns)   start_T_cntr   end_T_cntr   N_of_avg_points,e/i")')
      DO n = 1, N_of_all_avgsnaps
-        WRITE (41, '(2x,i4,2x,2(2x,f13.5),2x,2(2x,i9),2(4x,i6))') &
+        WRITE (41, '(2x,i5,2x,2(2x,f13.5),2x,2(2x,i9),2(4x,i6))') &
              & n, &
              & avgsnapshot(n)%T_cntr_begin * 1.0d9 * delta_t_s, &
              & avgsnapshot(n)%T_cntr_end * 1.0d9 * delta_t_s, &
@@ -267,7 +292,237 @@ SUBROUTINE INITIATE_AVERAGED_SNAPSHOTS
    ENDIF
   END IF
 
+  CALL ADDITIONAL_PARAMETERS_AVG_SNAPHOTS
+
+   IF (Rank_of_process==0) THEN
+      IF ( use_checkpoint/=1 ) THEN ! Fresh start 
+         DO idx=1,num_plane_x_locations+num_plane_y_locations
+            WRITE( file_name,'(A,I3.3,A)') "Flux_through_plane_",idx,".dat"
+            OPEN (21, FILE = file_name, STATUS = 'REPLACE')      
+            IF ( idx<=num_plane_x_locations ) THEN
+               WRITE( plane_name,'(A,ES15.7,A)') "X = ",plane_x_cuts_location(idx)*delta_x_m ," [m]"
+            ELSE 
+               WRITE( plane_name,'(A,ES15.7,A)') "Y = ",plane_y_cuts_location(idx-num_plane_x_locations)*delta_x_m," [m]"
+            END IF
+            WRITE (21,'(A)' ) plane_name
+            WRITE( 21,'(A)', ADVANCE='no' ) "Time_counter,Time[s],electrons[s-1]"
+            DO species=2,N_spec+1
+               WRITE (21, '(A,I1,A)', ADVANCE='no' ) ",ions_species_",idx,"[s-1]"
+            END DO       
+            CLOSE (21, STATUS = 'KEEP')
+         ENDDO 
+      ELSE
+         DO idx=1,num_plane_x_locations+num_plane_y_locations
+            exists = .FALSE.
+            WRITE( file_name,'(A,I3.3,A)') "Flux_through_plane_",idx,".dat"
+            INQUIRE ( FILE = file_name, EXIST = exists)
+            IF (exists) THEN                                                       
+               OPEN (21, FILE = file_name, STATUS = 'OLD')         
+               ! Skip header
+               DO n=1,3
+                  READ(21, '(A)') 
+               END DO
+               ! Read data
+               DO 
+                  READ (21, '(2x,i10,2x,ES18.10)', iostat = ios) i_dummy
+                  IF (ios.NE.0) EXIT
+                  IF (i_dummy.GE.Start_T_cntr) EXIT
+               END DO
+               BACKSPACE(21) ! Backspace is restored. I can safely eliminate last poitn because it should be recomputed as checkpoint automatically restarts at start of average window
+               ENDFILE 21         
+            ELSE       
+               OPEN (21, FILE = file_name, STATUS = 'REPLACE')      
+               IF ( idx<=num_plane_x_locations ) THEN
+                  WRITE( plane_name,'(A,ES15.7,A)') "X = ",plane_x_cuts_location(idx)*delta_x_m ," [m]"
+               ELSE 
+                  WRITE( plane_name,'(A,ES15.7,A)') "Y = ",plane_y_cuts_location(idx-num_plane_x_locations)*delta_x_m," [m]"
+               END IF
+               WRITE (21,'(A)' ) plane_name
+               WRITE( 21,'(A)', ADVANCE='no' ) "Time_counter,Time[s],electrons[s-1]"
+               DO species=2,N_spec+1
+                  WRITE (21, '(A,I1,A)', ADVANCE='no' ) ",ions_species_",idx,"[s-1]"
+               END DO       
+            END IF
+            CLOSE (21, STATUS = 'KEEP')
+         END DO
+      END IF 
+   END IF
+
 END SUBROUTINE INITIATE_AVERAGED_SNAPSHOTS
+
+!--------------------------------------------------------------------------------------------------
+!     SUBROUTINE ADDITIONAL_PARAMETERS_AVG_SNAPHOTS
+!>    @details Read additional parameters related to avg_snapshots
+!!    @authors W. Villafana
+!!    @date    Apr-17-2024
+!-------------------------------------------------------------------------------------------------- 
+SUBROUTINE ADDITIONAL_PARAMETERS_AVG_SNAPHOTS
+
+   USE mod_print, ONLY: print_message, print_parser_error
+   USE AvgSnapshots, ONLY: plane_x_cuts_location, plane_y_cuts_location,num_plane_x_locations, num_plane_y_locations, save_collision_freq_ee, avg_flux_and_history
+   USE CurrentProblemValues, ONLY: string_length, delta_x_m
+
+   IMPLICIT NONE
+   INCLUDE 'mpif.h'
+   
+   ! LOCAL
+   INTEGER :: ierr
+   CHARACTER (LEN=1000) :: long_buf,line,separator ! long buffer for string
+   INTEGER :: i_found ! flag to decide if I found keyword or not.
+   REAL(8) :: rval ! buffer for real values
+   INTEGER :: ival ! buffer for integer values
+   CHARACTER(LEN=string_length) :: caval ! buffer for string values
+   CHARACTER(LEN=string_length) :: message, routine  
+   LOGICAL :: exists
+   INTEGER :: idx
+   
+   ! Declare routine name and debug level
+   routine = 'ADDITIONAL_PARAMETERS_AVG_SNAPHOTS'
+  
+   separator = '='
+
+   
+   WRITE( message, '(A)') "Reading additional parameters for averaged snapshots"//achar(10)
+   CALL print_message(message,routine)   
+
+   INQUIRE (FILE = 'init_avgsnapshots.dat', EXIST = exists)
+   OPEN (9, file='init_avgsnapshots.dat')
+
+   i_found = 0
+   REWIND(9)
+   DO
+      READ (9,"(A)",iostat=ierr) line ! read line into character variable
+      IF ( ierr/=0 ) EXIT
+      IF (line == '') CYCLE   ! Skip the rest of the loop if the line is empty. Will cause a crash
+      READ (line,*) long_buf ! read first word of line
+      IF ( TRIM(long_buf)=="planes_X_locations_to_measure_net_flux" ) THEN ! found search string at beginning of line
+         i_found = 1
+
+         CALL count_number_of_inputs(line,long_buf,separator,num_plane_x_locations)
+         IF (num_plane_x_locations > 0) THEN
+            ALLOCATE(plane_x_cuts_location(num_plane_x_locations))
+         ELSE
+            WRITE(message, '(A,A)') 'No values found in the line: ',line
+            CALL print_parser_error(message)
+         END IF            
+         
+         READ (line,*) long_buf,separator,plane_x_cuts_location(1:num_plane_x_locations)
+
+         WRITE( message,'(A)') "planes_X_locations_to_measure_net_flux keyword present. Will generate fluxes on for cuts at X = ... if averaged snaphots are turned on"
+         CALL print_message( message,routine )    
+         
+         DO idx=1,num_plane_x_locations
+            WRITE( message,'(A,ES10.3,A,I10,A,I10)') "Plane cut at X = ",plane_x_cuts_location(idx)," [m] between grid node i = ",FLOOR(plane_x_cuts_location(idx)/delta_x_m)," and i = ",FLOOR(plane_x_cuts_location(idx)/delta_x_m)+1
+            plane_x_cuts_location(idx) = plane_x_cuts_location(idx)/delta_x_m
+            CALL print_message( message )    
+         END DO            
+
+      END IF
+   END DO  
+   IF ( i_found==0 ) THEN
+      WRITE( message,'(A)') "planes_X_locations_to_measure_net_flux keyword not present. I assume we do not want it. "
+      CALL print_message( message,routine )       
+   END IF                          
+   
+   i_found = 0
+   REWIND(9)
+   DO
+      READ (9,"(A)",iostat=ierr) line ! read line into character variable
+      IF ( ierr/=0 ) EXIT
+      IF (line == '') CYCLE   ! Skip the rest of the loop if the line is empty. Will cause a crash
+      READ (line,*) long_buf ! read first word of line
+      IF ( TRIM(long_buf)=="planes_Y_locations_to_measure_net_flux" ) THEN ! found search string at beginning of line
+         i_found = 1
+         CALL count_number_of_inputs(line,long_buf,separator,num_plane_y_locations)
+         IF (num_plane_y_locations > 0) THEN
+            ALLOCATE(plane_y_cuts_location(num_plane_y_locations))
+         ELSE
+            WRITE(message, '(A,A)') 'No values found in the line: ',line
+            CALL print_parser_error(message)
+         END IF                   
+         READ (line,*) long_buf,separator,plane_y_cuts_location(1:num_plane_y_locations)
+
+         WRITE( message,'(A)') "planes_Y_locations_to_measure_net_flux keyword present. Will generate fluxes on for cuts at Y = ... if averaged snaphots are turned on."
+         CALL print_message( message,routine )    
+         
+         DO idx=1,num_plane_y_locations
+            WRITE( message,'(A,ES10.3,A,I10,A,I10)') "Plane cut at Y = ",plane_y_cuts_location(idx)," [m] between grid node j = ",FLOOR(plane_y_cuts_location(idx)/delta_x_m)," and j = ",FLOOR(plane_y_cuts_location(idx)/delta_x_m)+1
+            plane_y_cuts_location(idx) = plane_y_cuts_location(idx)/delta_x_m
+            CALL print_message( message )    
+         END DO            
+
+      END IF
+   END DO  
+   IF ( i_found==0 ) THEN
+      WRITE( message,'(A)') "planes_Y_locations_to_measure_net_flux keyword not present. I assume we do not want it. "
+      CALL print_message( message,routine )       
+   END IF     
+   
+   i_found = 0
+   REWIND(9)
+   DO
+      READ (9,"(A)",iostat=ierr) line ! read line into character variable
+      IF ( ierr/=0 ) EXIT
+      IF (line == '') CYCLE   ! Skip the rest of the loop if the line is empty. Will cause a crash
+      READ (line,*) long_buf ! read first word of line
+      IF ( TRIM(long_buf)=="coulomb_collision_ee_freq" ) THEN ! found search string at beginning of line
+         i_found = 1
+
+         READ (line,*) long_buf,separator,caval            
+         
+         IF (TRIM(caval)=='yes') THEN
+            save_collision_freq_ee = .TRUE.
+            WRITE( message, '(A)') "Coulomb collision frequency 2D maps are saved and averaged on the fly."//achar(10)
+         ELSE IF (TRIM(caval)=='no') THEN
+            save_collision_freq_ee = .FALSE.
+            WRITE( message, '(A)') "Coulomb collision frequency 2D maps are NOT saved."//achar(10)
+         ELSE 
+            WRITE( message, '(A,A,A)') "No sure if you want to save Coulomb collision frequency. For keyword 'coulomb_collision_ee_freq' I received: ",TRIM(caval),". Expected:'yes' or 'no'. Case sensitive"//achar(10)
+            CALL print_parser_error(message)
+         END IF
+         CALL print_message( message )
+
+      END IF
+   END DO  
+   IF ( i_found==0 ) THEN
+      WRITE( message,'(A)') "coulomb_collision_ee_freq keyword not present. I assume we do not want it. "
+      CALL print_message( message,routine )       
+   END IF         
+   
+   i_found = 0
+   REWIND(9)
+   DO
+      READ (9,"(A)",iostat=ierr) line ! read line into character variable
+      IF ( ierr/=0 ) EXIT
+      IF (line == '') CYCLE   ! Skip the rest of the loop if the line is empty. Will cause a crash
+      READ (line,*) long_buf ! read first word of line
+      IF ( TRIM(long_buf)=="avg_flux_and_history" ) THEN ! found search string at beginning of line
+         i_found = 1
+
+         READ (line,*) long_buf,separator,caval            
+         
+         IF (TRIM(caval)=='yes') THEN
+            avg_flux_and_history = .TRUE.
+            WRITE( message, '(A)') "Fluxes at the wall and reporting of particles will be averaged on the fly."//achar(10)
+         ELSE IF (TRIM(caval)=='no') THEN
+            avg_flux_and_history = .FALSE.
+            WRITE( message, '(A)') "Fluxes at the wall and reporting of particles will be printed at each iteration."//achar(10)
+         ELSE 
+            WRITE( message, '(A,A,A)') "No sure if you want to avergae on the fly fluxes and reporting of particles. For keyword 'avg_flux_and_history' I received: ",TRIM(caval),". Expected:'yes' or 'no'. Case sensitive"//achar(10)
+            CALL print_parser_error(message)
+         END IF
+         CALL print_message( message )
+
+      END IF
+   END DO  
+   IF ( i_found==0 ) THEN
+      WRITE( message,'(A)') "avg_flux_and_history keyword not present. I assume we do not want it. "
+      CALL print_message( message,routine )       
+   END IF                       
+
+   CLOSE (9, STATUS = 'KEEP')   
+
+END SUBROUTINE ADDITIONAL_PARAMETERS_AVG_SNAPHOTS
 
 !------------------------------------------------------------------------------------------------------------
 ! 
@@ -496,6 +751,17 @@ SUBROUTINE COLLECT_F_EX_EY_FOR_AVERAGED_SNAPSHOT
         END DO
      END IF
 
+      IF ( save_collision_freq_ee ) THEN
+         ALLOCATE(cs_avg_coulomb_ee(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT = ALLOC_ERR)
+         cs_avg_coulomb_ee = 0.0
+      ENDIF
+
+      IF ( num_plane_x_locations+num_plane_y_locations>0 ) THEN
+         IF (ALLOCATED(cluster_flux_through_plane_over_one_period)) DEALLOCATE(cluster_flux_through_plane_over_one_period)
+         ALLOCATE(cluster_flux_through_plane_over_one_period(1:N_spec+1,1:num_plane_x_locations+num_plane_y_locations))
+         ALLOCATE(total_flux_through_plane_over_one_period(1:N_spec+1,1:num_plane_x_locations+num_plane_y_locations))
+         total_flux_through_plane_over_one_period(1:N_spec+1,1:num_plane_x_locations+num_plane_y_locations) = 0.0
+      ENDIF
   END IF   !### IF ((T_cntr.EQ.avgsnapshot(current_avgsnap)%T_cntr_begin).AND.(cluster_rank_key.EQ.0)) THEN
 
 ! potential
@@ -601,6 +867,7 @@ END SUBROUTINE COLLECT_F_EX_EY_FOR_AVERAGED_SNAPSHOT
 SUBROUTINE COLLECT_ELECTRON_DATA_FOR_AVERAGED_SNAPSHOT
 
   USE AvgSnapshots
+  USE IonParticles, ONLY: N_spec
   USE Snapshots, ONLY : cs_N, cs_VX, cs_VY, cs_VZ, cs_WX, cs_WY, cs_WZ, cs_VXVY, cs_VXVZ, cs_VYVZ, cs_QX, cs_QY, cs_QZ
   USE ClusterAndItsBoundaries
 
@@ -725,6 +992,11 @@ SUBROUTINE COLLECT_ELECTRON_DATA_FOR_AVERAGED_SNAPSHOT
      END DO
   END IF
 
+   IF ( num_plane_x_locations+num_plane_y_locations>0 ) THEN 
+      total_flux_through_plane_over_one_period(1:N_spec+1,1:num_plane_x_locations+num_plane_y_locations) = total_flux_through_plane_over_one_period(1:N_spec+1,1:num_plane_x_locations+num_plane_y_locations) +&
+                                                                                                      cluster_flux_through_plane_over_one_period(1:N_spec+1,1:num_plane_x_locations+num_plane_y_locations)
+   END IF
+
 END SUBROUTINE COLLECT_ELECTRON_DATA_FOR_AVERAGED_SNAPSHOT
 
 !------------------------------------------------------------------------------------------------------------
@@ -734,6 +1006,7 @@ SUBROUTINE COLLECT_ION_DATA_FOR_AVERAGED_SNAPSHOT(s)
   USE AvgSnapshots
   USE Snapshots, ONLY : cs_N, cs_VX, cs_VY, cs_VZ, cs_WX, cs_WY, cs_WZ, cs_VXVY, cs_VXVZ, cs_VYVZ, cs_QX, cs_QY, cs_QZ
   USE ClusterAndItsBoundaries
+  USE IonParticles, ONLY: N_spec
 
   IMPLICIT NONE
 
@@ -872,6 +1145,11 @@ SUBROUTINE COLLECT_ION_DATA_FOR_AVERAGED_SNAPSHOT(s)
      END DO
   END IF
 
+   IF ( num_plane_x_locations+num_plane_y_locations>0 ) THEN 
+      total_flux_through_plane_over_one_period(1:N_spec+1,1:num_plane_x_locations+num_plane_y_locations) = total_flux_through_plane_over_one_period(1:N_spec+1,1:num_plane_x_locations+num_plane_y_locations) +&
+                                                                                                   cluster_flux_through_plane_over_one_period(1:N_spec+1,1:num_plane_x_locations+num_plane_y_locations)
+   END IF  
+
 END SUBROUTINE COLLECT_ION_DATA_FOR_AVERAGED_SNAPSHOT
 
 !------------------------------------------------------------------------------------------------------------
@@ -881,11 +1159,12 @@ SUBROUTINE CREATE_AVERAGED_SNAPSHOT
   USE ParallelOperationValues
   USE AvgSnapshots
   USE CurrentProblemValues, ONLY : N_subcycles, F_scale_V, E_scale_Vm, current_factor_Am2, N_scale_part_m3, V_scale_ms, &
-                                 & energy_factor_eV, temperature_factor_eV, heat_flow_factor_Wm2, T_cntr, delta_t_s
+                                 & energy_factor_eV, temperature_factor_eV, heat_flow_factor_Wm2, T_cntr, delta_t_s, string_length, weight_ptcl
   USE ClusterAndItsBoundaries
   USE IonParticles, ONLY : N_spec, Qs, Ms
   USE MCCollisions, ONLY : N_neutral_spec, neutral, collision_e_neutral
   USE Snapshots, ONLY : diagnostics_neutral
+  USE mod_print, ONLY: print_message
 
   IMPLICIT NONE
 
@@ -898,6 +1177,7 @@ SUBROUTINE CREATE_AVERAGED_SNAPSHOT
   INTEGER ALLOC_ERR
 
   REAL, ALLOCATABLE :: cs_avg_Jsum(:,:)
+  REAL, ALLOCATABLE :: final_flux_through_plane_over_one_period(:,:)
 
 !                                 ! ----x----I----x----I--
   CHARACTER(20) filename_F        ! _NNNN_avg_F_V_2D.bin
@@ -921,7 +1201,15 @@ SUBROUTINE CREATE_AVERAGED_SNAPSHOT
 !                                   ----x----I----x----I----x----I----x----I----x
   CHARACTER(45) filename_encoll   ! _NNNN_avg_frequency_e_n_AAAAAA_coll_id_NN.bin
 
+  CHARACTER(LEN=string_length) :: filename_generic
+
   INTEGER s, i, j, n, p
+
+  INTEGER :: idx, species
+  CHARACTER(LEN=string_length) :: file_name
+  CHARACTER(LEN=string_length) :: message
+
+  INTEGER :: avg_output_flag
 
   INTERFACE
      FUNCTION convert_int_to_txt_string(int_number, length_of_string)
@@ -931,12 +1219,15 @@ SUBROUTINE CREATE_AVERAGED_SNAPSHOT
      END FUNCTION convert_int_to_txt_string
   END INTERFACE
 
-! quit if all snapshots were created or if due to any reasons the snapshot counter is 
-! larger than the declared number of snapshots (e.g., when no snapshots are requested) 
-  IF (current_avgsnap.GT.N_of_all_avgsnaps) RETURN
+  
+  CALL DETERMINE_AVG_DATA_CREATION(avg_output_flag) 
+  IF (avg_output_flag==0) RETURN
+! ! quit if all snapshots were created or if due to any reasons the snapshot counter is 
+! ! larger than the declared number of snapshots (e.g., when no snapshots are requested) 
+!   IF (current_avgsnap.GT.N_of_all_avgsnaps) RETURN
 
-! quit if the current moment of time is not the moment when it is necessary to create the snapshot
-  IF (T_cntr.NE.avgsnapshot(current_avgsnap)%T_cntr_end) RETURN
+! ! quit if the current moment of time is not the moment when it is necessary to create the snapshot
+!   IF (T_cntr.NE.avgsnapshot(current_avgsnap)%T_cntr_end) RETURN
 
   IF (cluster_rank_key.NE.0) THEN
 ! processes which are not cluster masters do not participate in saving data
@@ -1550,8 +1841,127 @@ SUBROUTINE CREATE_AVERAGED_SNAPSHOT
      END DO
   END IF
 
+   IF (save_collision_freq_ee) THEN
+      filename_generic = '_NNNN_avg_frequency_e_e_coll.bin'
+      filename_generic(2:5) = convert_int_to_txt_string(current_avgsnap, 4)
+      avg_factor = 1.0 / REAL(N_averaged_timesteps)
+      ! avg_factor = 1.0 / REAL(delta_t_s * N_averaged_timesteps)
+      DO j = c_indx_y_min, c_indx_y_max
+         DO i = c_indx_x_min, c_indx_x_max
+            cs_avg_coulomb_ee(i,j) = cs_avg_coulomb_ee(i,j) * avg_factor
+         END DO
+      END DO
+      CALL SAVE_GLOBAL_2D_ARRAY(cs_avg_coulomb_ee, filename_generic)
+      CALL MPI_BARRIER(COMM_HORIZONTAL, ierr)
+      DEALLOCATE(cs_avg_coulomb_ee, STAT = ALLOC_ERR)
+   END IF
+
+   IF (num_plane_x_locations+num_plane_y_locations>0) THEN
+      ALLOCATE(final_flux_through_plane_over_one_period(1:N_spec+1,1:num_plane_x_locations+num_plane_y_locations))
+      final_flux_through_plane_over_one_period(1:N_spec+1,1:num_plane_x_locations+num_plane_y_locations) = 0.0
+      CALL MPI_REDUCE(total_flux_through_plane_over_one_period, final_flux_through_plane_over_one_period, (N_spec+1)*(num_plane_x_locations+num_plane_y_locations), MPI_REAL, MPI_SUM, 0, COMM_HORIZONTAL, ierr)
+   ENDIF
+
+   IF (Rank_horizontal==0) THEN 
+      avg_factor = 1.0 / REAL(delta_t_s * N_averaged_timesteps)
+      DO idx = 1,num_plane_x_locations+num_plane_y_locations
+         WRITE( file_name,'(A,I3.3,A)') "Flux_through_plane_",idx,".dat"       
+         WRITE( message,'(A)') "Saving files "//TRIM(file_name)
+         CALL print_message( message )   
+         OPEN (21, file = file_name, position = 'append')
+            WRITE (21, '(2x,i10,2x,ES18.10)', ADVANCE='no' ) T_cntr, T_cntr * delta_t_s
+            DO species=1,N_spec+1
+               WRITE (21, '(2x,ES18.10)', ADVANCE='no' ) final_flux_through_plane_over_one_period(species,idx)*avg_factor*weight_ptcl
+            END DO 
+         CLOSE (21, status = 'keep')      
+      ENDDO
+   ENDIF
+
+   IF (ALLOCATED(final_flux_through_plane_over_one_period)) DEALLOCATE(final_flux_through_plane_over_one_period)
+   IF (ALLOCATED(total_flux_through_plane_over_one_period)) DEALLOCATE(total_flux_through_plane_over_one_period)
+
   IF (Rank_of_process.EQ.0) PRINT '(/2x,"### ^^^^^^^^^^^^^^^^^^^^ Averaged Snapshot ",i4," completed :) ^^^^^^^^^^^^^^^^^^^ ###")', current_avgsnap
-
+   
   current_avgsnap = current_avgsnap + 1           ! increase the snapshots counter (cluster masters only, other processes did this already)
-
+  
 END SUBROUTINE CREATE_AVERAGED_SNAPSHOT
+
+! --------------------------------------------------------------------------------------------------
+!     SUBROUTINE DETERMINE_AVG_DATA_CREATION
+! >    @details Determines if averaged snapshots or any quantity using the same time table should be created 
+! !    @authors W. Villafana
+! !    @date    Aug-25-2024
+! -------------------------------------------------------------------------------------------------- 
+
+SUBROUTINE DETERMINE_AVG_DATA_CREATION(avg_output_flag)
+
+   USE AvgSnapshots, ONLY: current_avgsnap, N_of_all_avgsnaps, avgsnapshot
+   USE CurrentProblemValues, ONLY: T_cntr, string_length
+   USE mod_print, ONLY: print_debug
+   IMPLICIT NONE
+
+   !IN/OUT
+   INTEGER, INTENT(OUT) :: avg_output_flag
+
+   !LOCAL   
+   CHARACTER(LEN=string_length) :: routine
+   INTEGER :: local_debug_level   
+
+   routine = "DETERMINE_AVG_DATA_CREATION"
+   local_debug_level = 2
+
+   CALL print_debug( routine,local_debug_level)   
+
+   avg_output_flag = 1 ! By default I want an output
+   ! quit if all snapshots were created or if due to any reasons the snapshot counter is 
+   ! larger than the declared number of snapshots (e.g., when no snapshots are requested) 
+   IF (current_avgsnap.GT.N_of_all_avgsnaps) avg_output_flag = 0
+   IF (avg_output_flag==0) RETURN 
+
+   ! quit if the current moment of time is not the moment when it is necessary to create the snapshot
+   IF (T_cntr.NE.avgsnapshot(current_avgsnap)%T_cntr_end) avg_output_flag = 0   
+
+END SUBROUTINE DETERMINE_AVG_DATA_CREATION
+
+! --------------------------------------------------------------------------------------------------
+!     SUBROUTINE DECIDE_COMPUTE_AVG_DATA
+! >    @details Determines if averaged data should be computed. Answer can be no after a restart. 
+!               In such a case, first iterations will be ignored until I can properly compute the next avg data array (n+1).
+!               That implies that avg data array number n can be not computed at all if it could not complete before the restart.
+!               Usually that does not occur because I need the code to crash right after checkpoint but before the current avg data array could be computed. 
+!               If I compute one more, I am safe. NOT IDEAL
+! !    @authors W. Villafana
+! !    @date    Aug-29-2024
+! -------------------------------------------------------------------------------------------------- 
+
+SUBROUTINE DECIDE_IF_COMPUTE_AVG_DATA_AFTER_RESTART(avg_compute_flag)
+
+   USE AvgSnapshots, ONLY: current_avgsnap, N_of_all_avgsnaps, avgsnapshot
+   USE CurrentProblemValues, ONLY: T_cntr, string_length
+   USE mod_print, ONLY: print_debug
+   IMPLICIT NONE
+
+   !IN/OUT
+   INTEGER, INTENT(OUT) :: avg_compute_flag
+
+   !LOCAL   
+   CHARACTER(LEN=string_length) :: routine
+   INTEGER :: local_debug_level   
+
+   routine = "DECIDE_IF_COMPUTE_AVG_DATA_AFTER_RESTART"
+   local_debug_level = 2
+
+   CALL print_debug( routine,local_debug_level)   
+
+   avg_compute_flag = 0
+   
+   IF ((current_avgsnap.GE.1).AND.(current_avgsnap.LE.N_of_all_avgsnaps)) THEN
+      IF ( (T_cntr.GE.avgsnapshot(current_avgsnap)%T_cntr_begin).AND. &
+         & (T_cntr.LE.avgsnapshot(current_avgsnap)%T_cntr_end) ) THEN  
+            avg_compute_flag = 1 
+      END IF
+   END IF
+
+END SUBROUTINE DECIDE_IF_COMPUTE_AVG_DATA_AFTER_RESTART
+
+

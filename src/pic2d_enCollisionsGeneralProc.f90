@@ -6,10 +6,12 @@ SUBROUTINE INITIATE_ELECTRON_NEUTRAL_COLLISIONS
 
   USE ParallelOperationValues
   USE MCCollisions
-  USE CurrentProblemValues, ONLY : kB_JK, e_Cl, N_max_vel, T_e_eV, N_max_vel
+  USE CurrentProblemValues, ONLY : kB_JK, e_Cl, N_max_vel, T_e_eV, N_max_vel, global_maximal_i, &
+                                   & global_maximal_j, zero, string_length, delta_x_m
   USE IonParticles, ONLY : N_spec, Ms
   USE SetupValues, ONLY: i_neutral_profile, nn_neutral_1
-!  USE ClusterAndItsBoundaries
+  USE BlockAndItsBoundaries, ONLY: work_dir_partition_and_fields_files
+  !  USE ClusterAndItsBoundaries
 
   IMPLICIT NONE
 
@@ -39,9 +41,13 @@ SUBROUTINE INITIATE_ELECTRON_NEUTRAL_COLLISIONS
   INTEGER indx_energy
   INTEGER indx_energy_max_prob
   REAL(8) temp
+  
+  REAL(8) :: nij
+  CHARACTER(LEN=string_length) :: nn_filename
 
 ! functions
   REAL(8) frequency_of_en_collision
+  REAL(8) :: neutral_density_normalized
 
   INTERFACE
      FUNCTION convert_int_to_txt_string(int_number, length_of_string)
@@ -324,6 +330,29 @@ SUBROUTINE INITIATE_ELECTRON_NEUTRAL_COLLISIONS
      END DO
 
   END DO   !###  DO n = 1, N_neutral_spec
+  IF (Rank_of_process.EQ.0) THEN
+      n = 1
+      i = 0
+
+      nn_filename = 'proc_NNNN_nn_vs_xy.dat'
+      nn_filename(6:9) = convert_int_to_txt_string(Rank_of_process,4)
+
+      OPEN (10, FILE = TRIM(work_dir_partition_and_fields_files)//'/'//nn_filename, STATUS = 'REPLACE')
+      DO j = 0, global_maximal_j
+            DO i = 0, global_maximal_i
+            nij = neutral_density_normalized(n,REAL(i,8),REAL(j,8))
+            ! IF (nij<1e-10) nij = zero
+            WRITE (10, '(2x,i5,2x,i5,2x,f12.9,2x,f12.9,2x,e14.7)') &
+                  & i, &
+                  & j, &
+                  & i * delta_x_m, &
+                  & j * delta_x_m, &
+                  & nij*neutral(n)%N_m3
+            END DO
+      END DO
+      CLOSE (10, STATUS = 'KEEP')
+
+   END IF
 
 END SUBROUTINE INITIATE_ELECTRON_NEUTRAL_COLLISIONS
 
@@ -437,11 +466,11 @@ SUBROUTINE PERFORM_ELECTRON_NEUTRAL_COLLISIONS
 
         IF (first_collision_not_done_yet) THEN
            random_j = INT(well_random_number() * N_electrons)
-           random_j = MIN(MAX(random_j, 1), N_electrons)
-        ELSE
+           random_j = MIN(MAX(random_j, 1), N_electrons)            
+         ELSE
            DO                        ! search will be repeated until a number will be successfully obtained
-              random_j = INT(well_random_number() * N_electrons)
-              random_j = MIN(MAX(random_j, 1), N_electrons)
+              random_j = 1 + INT(well_random_number() * N_electrons)
+              random_j = MIN(random_j, N_electrons)
               IF (.NOT.Find_in_stored_list(random_j)) EXIT    !#### needs some safety mechanism to avoid endless cycling
            END DO
         END IF
@@ -767,6 +796,7 @@ SUBROUTINE SAVE_en_COLLISIONS
   USE MCCollisions
   USE ElectronParticles, ONLY : N_electrons
   USE CurrentProblemValues, ONLY : T_cntr, debug_level
+  USE AvgSnapshots, ONLY: avg_flux_and_history,current_avgsnap
 
   IMPLICIT NONE
 
@@ -788,8 +818,14 @@ SUBROUTINE SAVE_en_COLLISIONS
 
   INTEGER :: local_debug_level
 
+  INTEGER :: avg_output_flag
+
   local_debug_level = 3  
 
+   IF (avg_flux_and_history) THEN
+      CALL DETERMINE_AVG_DATA_CREATION(avg_output_flag)
+      IF (avg_output_flag==0) RETURN
+   END IF    
 ! report all collision counters to the process with zero global rank
 
   buflen=1             ! include N_electrons
@@ -868,7 +904,7 @@ REAL(8) FUNCTION neutral_density_normalized(n, x, y)
    IF ( i_neutral_profile==1 ) THEN
       
       ! in aperture and below
-      IF ( y< ys_neutral_1 ) THEN
+      IF ( y< ys_neutral_1 .AND. y>=ye_neutral_1 ) THEN
          
          ! Linear gradient. 
          slope = (1.0_8-nn_neutral_1)/(ys_neutral_1-ye_neutral_1)

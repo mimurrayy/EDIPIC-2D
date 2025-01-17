@@ -158,6 +158,7 @@ SUBROUTINE INITIATE_PARAMETERS
   c_indx_y_max_total = 0  
   Delta_r = one
   Delta_z = one
+  shift_center_z = zero
   i_no_poisson = 0
   i_empty_domain = 0
   i_one_particle = 0
@@ -174,6 +175,11 @@ SUBROUTINE INITIATE_PARAMETERS
   work_dir_2d_map = './' ! Save 2D maps in current directory by default 
   work_dir_partition_and_fields_files = './' 
   work_dir_probes = './'
+
+  i_customed_profile_initialization = 0
+  Rw_bessel = zero
+  Y_shift_exp_Y = zero
+  Y0_exp = zero
 
   Coulomb_flag = .FALSE.
   INQUIRE (FILE = 'init_CoulombScattering.dat', EXIST = exists)
@@ -228,11 +234,11 @@ SUBROUTINE INITIATE_PARAMETERS
   READ (9, '(A1)') buf !"---ddd---------- number of cells along the Y-direction in a block")')
   READ (9, '(3x,i3)') N_grid_block_y
   READ (9, '(A1)') buf !"--dddd---------- number of macroparticles per cell for the scale density")')
-  READ (9, '(i6)') N_of_particles_cell
+  READ (9, '(i12)') N_of_particles_cell
   READ (9, '(A1)') buf !"-----d---------- number of blocks in a cluster along the X-direction")')
   READ (9, '(5x,i1)') cluster_N_blocks_x
   READ (9, '(A1)') buf !"-----d---------- number of blocks in a cluster along the Y-direction")')
-  READ (9, '(5x,i1)') cluster_N_blocks_y
+  READ (9, '(4x,i2)') cluster_N_blocks_y
   READ (9, '(A1)') buf !"---ddd---ddd---- number of objects along domain boundary // number of material inner objects (>=0), each inner objects is a rectangle")')
   READ (9, '(3x,i3,3x,i3)') N_of_boundary_objects, N_of_inner_objects
 !   READ (9, '(A1)') buf !"-----d---------- Choose Cartesian (=0) or cylindrical (=1 for r_theta, =2 for r_z) case 
@@ -328,6 +334,7 @@ SUBROUTINE INITIATE_PARAMETERS
   DO n = N_of_boundary_objects+1, N_of_boundary_and_inner_objects  !N_of_inner_objects
      READ (9, '(A1)') buf !"===dd=== object type")')
      READ (9, '(3x,i2)') whole_object(n)%object_type
+     CALL print_info_object_type( n,whole_object(n)%object_type )
      IF ((whole_object(n)%object_type.NE.METAL_WALL).AND.(whole_object(n)%object_type.NE.DIELECTRIC)) THEN
         IF (Rank_of_process.EQ.0) PRINT '("Error, inner material object ",i2," has type ",i3," which is not permitted")', n, whole_object(n)%object_type
         CALL MPI_FINALIZE(ierr)
@@ -1146,7 +1153,7 @@ if (Rank_of_process.eq.0) print *, "SET_CLUSTER_STRUCTURE done"
 
   READ (9, '(A1)') buf !"---ddd.d---+d---dddd.ddd---ddd.dd-- ion mass [amu] / charge [e] / initial temperature [eV] / initial relative concentration [%]")')
   DO s = 1, N_spec
-     READ (9, '(3x,f5.1,3x,i2,3x,f8.3,3x,f6.2)') M_i_amu(s), Qs(s), init_Ti_eV(s), init_NiNe(s)
+     READ (9, '(3x,f6.2,2x,i2,3x,f8.3,3x,f6.2)') M_i_amu(s), Qs(s), init_Ti_eV(s), init_NiNe(s)
      init_NiNe(s) = 0.01_8 * init_NiNe(s)   ! convert % to fraction
   END DO
 
@@ -1163,6 +1170,12 @@ if (Rank_of_process.eq.0) print *, "SET_CLUSTER_STRUCTURE done"
   DO n = 1, N_of_boundary_and_inner_objects
      ALLOCATE(whole_object(n)%ion_hit_count(1:N_spec), STAT = ALLOC_ERR)
      whole_object(n)%ion_hit_count(1:N_spec) = 0
+     
+     whole_object(n)%electron_hit_flux_avg_per_s = zero
+     whole_object(n)%electron_emission_flux_avg_per_s = zero
+     ALLOCATE(whole_object(n)%ion_hit_flux_avg_per_s(1:N_spec), STAT = ALLOC_ERR)
+     whole_object(n)%ion_hit_flux_avg_per_s(1:N_spec) = zero
+
   END DO
 
   CALL MPI_BARRIER(MPI_COMM_WORLD, ierr)
@@ -1420,7 +1433,7 @@ SUBROUTINE print_info_object_type(n,obj_type)
          type_name = 'a priori unknow BC. Results might be wrong'
    END SELECT
    
-   WRITE( message, '(A,I2,A)'), "Object # ",n," "//TRIM(type_name)
+   WRITE( message, '(A,I2,A)') "Object # ",n," "//TRIM(type_name)
    CALL print_message(message)
 
 
@@ -1435,11 +1448,15 @@ SUBROUTINE read_flexible_parameters
    
    USE ParallelOperationValues, ONLY: Rank_of_process
    USE mod_print, ONLY: print_message, print_parser_error
-   USE CurrentProblemValues, ONLY: string_length, Delta_z, i_cylindrical, Delta_r, delta_x_m, debug_level, i_no_poisson, i_empty_domain, i_one_particle,vthx_factor,vthy_factor,vthz_factor, i_velocity_one_particle   
+   USE CurrentProblemValues, ONLY: string_length, Delta_z, i_cylindrical, Delta_r, delta_x_m, debug_level, &
+                                   i_no_poisson, i_empty_domain, i_one_particle,vthx_factor,vthy_factor,vthz_factor, &
+                                   i_velocity_one_particle, shift_center_z, &
+                                   i_customed_profile_initialization, Rw_bessel, Y0_exp, Y_shift_exp_Y, N_plasma_m3
    USE IonParticles, ONLY: i_freeze_ions
    USE Snapshots, ONLY: work_dir_2d_map
    USE BlockAndItsBoundaries, ONLY: work_dir_partition_and_fields_files
    USE Diagnostics, ONLY: work_dir_probes 
+   USE AvgSnapshots, ONLY: plane_x_cuts_location, plane_y_cuts_location,num_plane_x_locations, num_plane_y_locations
  
    IMPLICIT NONE
    INCLUDE 'mpif.h'
@@ -1453,14 +1470,19 @@ SUBROUTINE read_flexible_parameters
    CHARACTER(LEN=string_length) :: caval ! buffer for string values
    CHARACTER(LEN=string_length) :: message, routine  
    LOGICAL :: exists
+   INTEGER :: idx
    
    ! Declare routine name and debug level
    routine = 'read_flexible_parameters'
 
+   separator = '='
+   num_plane_x_locations = 0
+   num_plane_y_locations = 0
+
   ! Implement new parser for geometry 
    INQUIRE (FILE = 'init_params.dat', EXIST = exists)
    IF (exists) THEN
-      WRITE( message, '(A)'), "init_params.dat found."//achar(10)
+      WRITE( message, '(A)') "init_params.dat found."//achar(10)
       CALL print_message(message,routine)
       
       OPEN (9, file='init_params.dat')
@@ -1477,12 +1499,12 @@ SUBROUTINE read_flexible_parameters
             
             IF (TRIM(caval)=='cartesian') THEN
                i_cylindrical = 0
-               WRITE( message, '(A)'), "Selected geometry: CARTESIAN"//achar(10)
+               WRITE( message, '(A)') "Selected geometry: CARTESIAN"//achar(10)
             ELSE IF (TRIM(caval)=='cylindrical_r_z') THEN
                i_cylindrical = 2
-               WRITE( message, '(A)'), "Selected geometry: CYLINDRICAL r-z"//achar(10)
+               WRITE( message, '(A)') "Selected geometry: CYLINDRICAL r-z"//achar(10)
             ELSE 
-               WRITE( message, '(A,A,A)'), "Selected geometry is not correct. Received: ",TRIM(caval),". Expected:'cartesian' or 'cylindrical_r_z'. Case sensitive"//achar(10)
+               WRITE( message, '(A,A,A)') "Selected geometry is not correct. Received: ",TRIM(caval),". Expected:'cartesian' or 'cylindrical_r_z'. Case sensitive"//achar(10)
                CALL print_parser_error(message)
             END IF
             CALL print_message( message )
@@ -1512,6 +1534,26 @@ SUBROUTINE read_flexible_parameters
          WRITE( message,'(A)') "Delta_z keyword not present. I assume we do not want it"
          CALL print_message( message,routine )       
       END IF          
+
+      i_found = 0
+      REWIND(9)
+      DO
+         READ (9,"(A)",iostat=ierr) line ! read line into character variable
+         IF ( ierr/=0 ) EXIT
+         IF (line == '') CYCLE   ! Skip the rest of the loop if the line is empty. Will cause a crash
+         READ (line,*) long_buf ! read first word of line
+         IF ( TRIM(long_buf)=="shift_center_z" ) THEN ! found search string at beginning of line
+            i_found = 1
+            READ (line,*) long_buf,separator,rval            
+            shift_center_z = rval
+            WRITE( message,'(A,ES10.3,A)') "Partial init shift_center_z= ",shift_center_z," [-] (between -1 and 1). Zero means the the partial initialization is centered around Lz/2. One means it will be centered around Lz"
+            CALL print_message( message,routine )            
+         END IF
+      END DO
+      IF ( i_found==0 ) THEN
+         WRITE( message,'(A)') "shift_center_z keyword not present. I assume we do not want it"
+         CALL print_message( message,routine )       
+      END IF                
 
       i_found = 0
       REWIND(9)
@@ -1785,7 +1827,85 @@ SUBROUTINE read_flexible_parameters
          WRITE( message,'(A)') "wkdir_probes keyword not present. I assume we do not want it. It will be saved in './'"
          CALL print_message( message,routine )       
       END IF                     
-      
+
+      i_found = 0
+      REWIND(9)
+      DO
+         READ (9,"(A)",iostat=ierr) line ! read line into character variable
+         IF ( ierr/=0 ) EXIT
+         IF (line == '') CYCLE   ! Skip the rest of the loop if the line is empty. Will cause a crash
+         READ (line,*) long_buf ! read first word of line
+         IF ( TRIM(long_buf)=="i_customed_profile_initialization" ) THEN ! found search string at beginning of line
+            i_found = 1
+            READ (line,*) long_buf,separator,caval            
+
+            IF ( TRIM(caval)=="diffusion_bessel_in_X_exp_in_Y" ) THEN
+
+               i_customed_profile_initialization = 1
+               WRITE(message, '(A)') "Domain will be initialized with the law: n=N_uniform*J0(alpha*X)*"
+               CALL print_message(message, routine)
+               WRITE(message, '(A)') "(ch(alpha*(Y-Y_shift_exp_Y))-ch(alpha*Y0_exp)/sh(alpha*Y0_exp)*sh(alpha*(Y-Y_shift_exp_Y))."
+               CALL print_message(message, routine)
+               WRITE(message, '(A)') "For 0<=X<=Rw_bessel and Y_shift_exp_Y<Y<Y0_exp+Y_shift_exp_Y."
+               CALL print_message(message, routine)
+               WRITE(message, '(A)') "N_uniform = uniform density value set by user by default."
+               CALL print_message(message, routine)
+               WRITE(message, '(A)') "Rw_bessel is the wall position, alpha=first root of Bessel function/Rw_bessel."
+               CALL print_message(message, routine)
+               WRITE(message, '(A)') "Y_shift_exp_Y = coordinates from which profile starts."
+               CALL print_message(message, routine)
+               WRITE(message, '(A)') "Y0_exp: total distance over which profile is valid."
+               CALL print_message(message, routine)
+               WRITE(message, '(A)') "Outside the range of validity, the profile is by default uniform."//ACHAR(10)
+               CALL print_message(message, routine)               
+               IF (i_cylindrical/=2) THEN
+                  WRITE( message, '(A)') "You must use cylindrical_r_z for the geometry"
+                  CALL print_parser_error(message)
+               END IF
+            ELSE
+               WRITE( message,'(A,A,A)') 'With i_customed_profile_initialization keyword, you must use one of the following options "diffusion_bessel_in_X_exp_in_Y". &
+                                          Received: ',TRIM(caval),achar(10)
+               CALL print_parser_error( message )
+            END IF
+         END IF
+      END DO       
+      IF ( i_found==0 ) THEN
+         WRITE( message,'(A)') "i_customed_profile_initialization keyword not present. I assume we do not want it"
+         CALL print_message( message,routine )       
+      END IF            
+
+      IF (i_customed_profile_initialization==1) THEN
+         i_found = 0
+         REWIND(9)
+         DO
+            READ (9,"(A)",iostat=ierr) line ! read line into character variable
+            IF ( ierr/=0 ) EXIT
+            IF (line == '') CYCLE   ! Skip the rest of the loop if the line is empty. Will cause a crash
+            READ (line,*) long_buf ! read first word of line
+            IF ( TRIM(long_buf)=="input_for_diffusion_bessel_in_X_exp_in_Y" ) THEN ! found search string at beginning of line
+               i_found = 1
+               WRITE( message,'(A)') "For diffusion_bessel_in_X_exp_in_Y profile, reading in this order (international units): &
+                                               Rw_bessel Y_shift_exp_Y Y0_exp" 
+               CALL print_message( message,routine )   
+
+               READ (line,*) long_buf,separator,Rw_bessel,Y_shift_exp_Y,Y0_exp                  
+               WRITE( message,'(A,ES10.3,A,ES10.3,A,ES10.3,A)') "For diffusion_bessel_in_X_exp_in_Y profile, reading &
+                                               Rw_bessel= ",Rw_bessel," [m] &
+                                               Y_shift_exp_Y= ",Y_shift_exp_Y," [m], Y0_exp= ",Y0_exp," [m]"//ACHAR(10) 
+               CALL print_message( message,routine )            
+
+               ! Convert to dimensionless units
+               Rw_bessel = Rw_bessel/delta_x_m
+               Y_shift_exp_Y = Y_shift_exp_Y/delta_x_m
+               Y0_exp = Y0_exp/delta_x_m
+            END IF
+         END DO
+         IF ( i_found==0 ) THEN
+            WRITE( message,'(A)') "input_for_diffusion_bessel_in_X_exp_in_Y keyword missing but i_customed_profile_initialization requested. Must be used."
+            CALL print_parser_error( message )
+         END IF    
+      ENDIF         
+
       CLOSE (9, STATUS = 'KEEP')
    END IF
 
@@ -1793,6 +1913,56 @@ SUBROUTINE read_flexible_parameters
    CALL print_message( message )
 
  END SUBROUTINE read_flexible_parameters       
+
+!--------------------------------------------------------------------------------------------------
+!     SUBROUTINE prepare_values_array
+!>    @details Calculate how many inputs need to be read on a line. Returns correctly allocated array with REAL(8)
+!!    @authors W. Villafana
+!!    @date    Apr-15-2024
+!-------------------------------------------------------------------------------------------------- 
+
+SUBROUTINE count_number_of_inputs(line, long_buffer, separator , num_values)
+   
+   USE CurrentProblemValues, ONLY: string_length
+   USE mod_print, ONLY: print_debug, print_parser_error
+   IMPLICIT NONE
+
+   ! IN/OUT
+   CHARACTER(LEN=1000), INTENT(IN) :: line
+   CHARACTER(LEN=1000), INTENT(IN) :: long_buffer
+   CHARACTER(LEN=1000), INTENT(IN) :: separator
+   ! REAL(8), ALLOCATABLE, INTENT(INOUT) :: values(:)
+   INTEGER, INTENT(INOUT) :: num_values
+
+   ! LOCAL
+   CHARACTER(LEN=string_length) :: word
+   INTEGER :: iostat
+   CHARACTER(LEN=string_length) :: routine
+   INTEGER :: local_debug_level
+   CHARACTER(LEN=string_length) :: message
+   INTEGER :: read_pos
+
+   ! Declare routine name and debug level
+   routine = 'prepare_values_array'
+   local_debug_level = 1
+
+   CALL print_debug( routine,local_debug_level)   
+
+   ! Initialize the number of values
+   num_values = 0
+
+   ! First, count the number of values in the line
+   read_pos = 1
+
+   ! Loop to count words in the line
+   DO
+       READ (line(read_pos:), *, IOSTAT=iostat) word
+       IF (iostat /= 0) EXIT  ! Exit loop on read error or end of data
+       IF ( TRIM(word)/=TRIM(long_buffer) .AND. TRIM(word)/=TRIM(separator) ) num_values = num_values + 1
+       read_pos = read_pos + LEN(TRIM(word)) + 1  ! Update position to start of next word
+   END DO
+
+END SUBROUTINE count_number_of_inputs
 
 !--------------------------------------------------------
 INTEGER FUNCTION convert_logical_to_int(logvar)
@@ -3635,6 +3805,7 @@ SUBROUTINE DISTRIBUTE_CLUSTER_PARAMETERS
          CALL MPI_BCAST(yi_ecr(0:c_R_max), c_R_max+1, MPI_DOUBLE_PRECISION, 0, COMM_CLUSTER, ierr) 
       END IF
 
+
   ELSE
 
      CALL MPI_BCAST(bufer_length, 1, MPI_INTEGER, 0, COMM_CLUSTER, ierr)
@@ -3801,7 +3972,8 @@ SUBROUTINE DISTRIBUTE_CLUSTER_PARAMETERS
 
          ! y positions
          CALL MPI_BCAST(yi_ecr(0:c_R_max), c_R_max+1, MPI_DOUBLE_PRECISION, 0, COMM_CLUSTER, ierr) 
-      END IF     
+      END IF    
+          
 
      IF (ALLOCATED(factor_cyl_vol)) DEALLOCATE(factor_cyl_vol,STAT=ALLOC_ERR )
      ALLOCATE(factor_cyl_vol(c_indx_x_min:c_indx_x_max), STAT=ALLOC_ERR)
@@ -3812,6 +3984,17 @@ SUBROUTINE DISTRIBUTE_CLUSTER_PARAMETERS
      ALLOCATE(BY_grid(c_indx_x_min:c_indx_x_max,c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)     
 
   END IF
+
+      ! Communicate volunic ionization parameters for ionization given by ion flux
+   IF ( i_ionize_source_flux_dependent==1 ) THEN
+
+      ! Dimensions of cluster ionization zone
+      CALL MPI_BCAST(c_i_ion_source_start_flux_dependent, 1, MPI_INTEGER, 0, COMM_CLUSTER, ierr)        
+      CALL MPI_BCAST(c_i_ion_source_end_flux_dependent, 1, MPI_INTEGER, 0, COMM_CLUSTER, ierr)        
+      CALL MPI_BCAST(c_j_ion_source_start_flux_dependent, 1, MPI_INTEGER, 0, COMM_CLUSTER, ierr)        
+      CALL MPI_BCAST(c_j_ion_source_end_flux_dependent, 1, MPI_INTEGER, 0, COMM_CLUSTER, ierr)                 
+
+   END IF        
 
   ! Volume for cylindrical/cartesian
   CALL MPI_BCAST(factor_cyl_vol(c_indx_x_min:c_indx_x_max), c_indx_x_max-c_indx_x_min+1, MPI_DOUBLE_PRECISION, 0, COMM_CLUSTER, ierr)
@@ -3838,8 +4021,9 @@ SUBROUTINE DISTRIBUTE_PARTICLES
   USE ClusterAndItsBoundaries
   USE BlockAndItsBoundaries, ONLY: block_has_symmetry_plane_X_left
   USE mod_print, ONLY: print_message_cluster,print_output,print_output_all,print_error
-
+  USE mod_numerics, ONLY: mid_point_integration
   USE rng_wrapper
+  USE mod_function_wrappers_1d, ONLY: evaluate_function
 
   IMPLICIT NONE
 
@@ -3871,6 +4055,9 @@ SUBROUTINE DISTRIBUTE_PARTICLES
   INTEGER :: int_test ! test if integer precision is enough! temporary fix 
   CHARACTER(LEN=string_length) :: routine
   REAL(8) :: Rmax,Delta_z_max ! artificall coefficients to intilialize plasma on portion of domain only
+
+  REAL(8) :: max_value_distribution, local_distribution
+  CHARACTER(LEN=string_length) :: function_name_1, function_name_2
 
 ! functions
   REAL(8) Bx, By, Bz, Eze
@@ -3949,8 +4136,8 @@ SUBROUTINE DISTRIBUTE_PARTICLES
          ! Since we cannot play direclty with the statistical weight (which does not exist), we must adjust the number of macroparticles
          x_limit_right = MIN(x_limit_right,Rmax*c_indx_x_max_total)
          x_limit_left = MIN(x_limit_left,Rmax*c_indx_x_max_total)
-         y_limit_bot = MAX(y_limit_bot,(one-Delta_z_max)/two*c_indx_y_max_total)
-         y_limit_top = MIN(y_limit_top,(one+Delta_z_max)/two*c_indx_y_max_total)    
+         y_limit_bot = MAX(y_limit_bot,(one-Delta_z_max)/two*c_indx_y_max_total+c_indx_y_max_total*shift_center_z)
+         y_limit_top = MIN(y_limit_top,(one+Delta_z_max)/two*c_indx_y_max_total+c_indx_y_max_total*shift_center_z)    
          IF (y_limit_top<y_limit_bot) y_limit_bot = y_limit_top! make sure we have zero if domain has zero particles
          ! y_limit_bot = MIN(y_limit_top,y_limit_bot) 
          N_electrons =  INT( N_electrons_total_cyl*&
@@ -4024,10 +4211,17 @@ SUBROUTINE DISTRIBUTE_PARTICLES
 
      WRITE( message,'(A,ES10.3)') achar(10)//"Minimal average number of particles per cell in a cluster (no inner object):",N_ppc_min
      CALL print_output( message )
-     WRITE( message,'(A,ES10.3)') "Average number of particles per cell in first colum of cells (no inner object):",DBLE(N_electron_tot*1/((c_indx_x_max_total-c_indx_x_min_total)**2*(c_indx_y_max_total-c_indx_y_min_total)))!DBLE(N_electron_tot/((c_indx_x_max_total-c_indx_x_min_total)*(c_indx_y_max_total-c_indx_y_min_total))*two/(c_indx_x_max_total+c_indx_x_min_total))
-     CALL print_output( message )     
-     WRITE( message,'(A,ES10.3)') "Average number of particles per cell in last colum of cells (no inner object):",DBLE(N_electron_tot*(2*(c_indx_x_max_total-c_indx_x_min_total)+1)/((c_indx_x_max_total-c_indx_x_min_total)**2*(c_indx_y_max_total-c_indx_y_min_total)))!DBLE(N_electron_tot/((c_indx_x_max_total-c_indx_x_min_total)*(c_indx_y_max_total-c_indx_y_min_total))*two*(c_indx_x_max_total-1)/(c_indx_x_max_total+c_indx_x_min_total))
-     CALL print_output( message )          
+     IF (i_cylindrical==2) THEN
+         WRITE( message,'(A,ES10.3)') "Average number of particles per cell in first column of cells (no inner object):",DBLE(N_electron_tot*1/((c_indx_x_max_total-c_indx_x_min_total)**2*(c_indx_y_max_total-c_indx_y_min_total)))!DBLE(N_electron_tot/((c_indx_x_max_total-c_indx_x_min_total)*(c_indx_y_max_total-c_indx_y_min_total))*two/(c_indx_x_max_total+c_indx_x_min_total))
+         CALL print_output( message )     
+         WRITE( message,'(A,ES10.3)') "Average number of particles per cell in last column of cells (no inner object):",DBLE(N_electron_tot*(2*(c_indx_x_max_total-c_indx_x_min_total)+1)/((c_indx_x_max_total-c_indx_x_min_total)**2*(c_indx_y_max_total-c_indx_y_min_total)))!DBLE(N_electron_tot/((c_indx_x_max_total-c_indx_x_min_total)*(c_indx_y_max_total-c_indx_y_min_total))*two*(c_indx_x_max_total-1)/(c_indx_x_max_total+c_indx_x_min_total))
+         CALL print_output( message )          
+     ELSE IF (i_cylindrical==0) THEN
+         WRITE( message,'(A,ES10.3)') "Average number of particles per cell in first column of cells (no inner object):",DBLE(N_electron_tot/((c_indx_x_max_total-c_indx_x_min_total)*(c_indx_y_max_total-c_indx_y_min_total)))!DBLE(N_electron_tot/((c_indx_x_max_total-c_indx_x_min_total)*(c_indx_y_max_total-c_indx_y_min_total))*two/(c_indx_x_max_total+c_indx_x_min_total))
+         CALL print_output( message )     
+         WRITE( message,'(A,ES10.3)') "Average number of particles per cell in last column of cells (no inner object):",DBLE(N_electron_tot/((c_indx_x_max_total-c_indx_x_min_total)*(c_indx_y_max_total-c_indx_y_min_total)))!DBLE(N_electron_tot/((c_indx_x_max_total-c_indx_x_min_total)*(c_indx_y_max_total-c_indx_y_min_total))*two*(c_indx_x_max_total-1)/(c_indx_x_max_total+c_indx_x_min_total))
+         CALL print_output( message )          
+     END IF      
      WRITE( message,'(A,ES10.3)') "Mean average number of particles per cell in whole domain (no inner object):",DBLE(N_electron_tot/((c_indx_x_max_total-c_indx_x_min_total)*(c_indx_y_max_total-c_indx_y_min_total)))
      CALL print_output( message )
      WRITE( message,'(A,ES10.3,A)') "Maximal average number of particles per cell in a cluster (no inner object):",N_ppc_max,achar(10)
@@ -4117,6 +4311,30 @@ SUBROUTINE DISTRIBUTE_PARTICLES
         ENDIF
 
      END DO
+
+     ! Checking if I should remove some electrons based on a customed inpital profile
+      k = 0
+      DO WHILE (k<N_electrons)
+         IF (N_electrons==0) EXIT
+         k = k+1
+         
+         IF (i_customed_profile_initialization==1) THEN
+            IF (Rw_bessel>=electron(k)%X .AND. Y_shift_exp_Y+Y0_exp>=electron(k)%Y .AND. Y_shift_exp_Y<=electron(k)%Y ) THEN
+            
+               function_name_1 = "bessel_diffusion"
+               function_name_2 = "cosh_sinh_diffusion"
+
+               max_value_distribution = one
+               local_distribution = evaluate_function(function_name_1,electron(k)%X)*evaluate_function(function_name_2,electron(k)%Y)
+
+               ! Rejection method
+               IF (well_random_number()>local_distribution/max_value_distribution) CALL REMOVE_ELECTRON(k)
+
+            END IF
+         END IF
+         
+      ENDDO
+
 
 ! remove all electrons which were placed inside inner objects
      k=0

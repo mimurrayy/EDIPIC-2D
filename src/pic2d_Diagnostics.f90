@@ -254,7 +254,7 @@ SUBROUTINE INITIATE_GENERAL_DIAGNOSTICS
 
   LOGICAL exists
   INTEGER i, s
-  INTEGER i_dummy
+  INTEGER i_dummy, ios
 
   INTERFACE
      FUNCTION convert_int_to_txt_string(int_number, length_of_string)
@@ -271,11 +271,18 @@ SUBROUTINE INITIATE_GENERAL_DIAGNOSTICS
 
         INQUIRE (FILE = 'history_e.dat', EXIST = exists)
         IF (exists) THEN                                                       
-           OPEN (21, FILE = 'history_e.dat', STATUS = 'OLD')          
-           DO i = 1, Start_T_cntr   !N_of_saved_records             ! these files are updated at every electron timestep
-              READ (21, '(2x,i8,2x,f12.5,2x,i8,2x,4(2x,e14.7))') i_dummy
-           END DO
-           ENDFILE 21       
+           OPEN (21, FILE = 'history_e.dat', STATUS = 'OLD')    
+            DO 
+               READ (21, '(2x,i8,2x,f12.5,2x,i8,2x,4(2x,e14.7))', iostat = ios) i_dummy
+               IF (ios.NE.0) EXIT
+               IF (i_dummy.GE.Start_T_cntr) EXIT
+            END DO
+         BACKSPACE(21)
+         ENDFILE 21                    
+         !   DO i = 1, Start_T_cntr   !N_of_saved_records             ! these files are updated at every electron timestep
+         !      READ (21, '(2x,i8,2x,f12.5,2x,i8,2x,4(2x,e14.7))') i_dummy
+         !   END DO
+         !   ENDFILE 21       
            CLOSE (21, STATUS = 'KEEP')        
         END IF
 
@@ -287,10 +294,17 @@ SUBROUTINE INITIATE_GENERAL_DIAGNOSTICS
         INQUIRE (FILE = history_i_filename, EXIST = exists)
         IF (exists) THEN                                                       
            OPEN (21, FILE = history_i_filename, STATUS = 'OLD')          
-           DO i = 1, Start_T_cntr   !N_of_saved_records             ! these files are updated at every electron timestep
-              READ (21, '(2x,i8,2x,f12.5,2x,i8,2x,4(2x,e14.7))') i_dummy
-           END DO
-           ENDFILE 21       
+            DO 
+               READ (21, '(2x,i8,2x,f12.5,2x,i8,2x,4(2x,e14.7))', iostat = ios) i_dummy
+               IF (ios.NE.0) EXIT
+               IF (i_dummy.GE.Start_T_cntr) EXIT
+            END DO
+            BACKSPACE(21)
+            ENDFILE 21                               
+         !   DO i = 1, Start_T_cntr   !N_of_saved_records             ! these files are updated at every electron timestep
+         !      READ (21, '(2x,i8,2x,f12.5,2x,i8,2x,4(2x,e14.7))') i_dummy
+         !   END DO
+         !   ENDFILE 21       
            CLOSE (21, STATUS = 'KEEP')        
         END IF
 
@@ -324,6 +338,7 @@ subroutine report_total_number_of_particles
   USE CurrentProblemValues
   USE ElectronParticles, ONLY : N_electrons, electron
   USE IonParticles, ONLY : N_spec, N_ions, ion, Ms
+  USE AvgSnapshots, ONLY: avg_flux_and_history, current_avgsnap
 
   IMPLICIT NONE
 
@@ -349,6 +364,8 @@ subroutine report_total_number_of_particles
                                     ! ----x----I----x
   CHARACTER(15) history_i_filename  ! history_i_S.dat
 
+  INTEGER :: avg_output_flag
+
   INTERFACE
      FUNCTION convert_int_to_txt_string(int_number, length_of_string)
        CHARACTER*(length_of_string) convert_int_to_txt_string
@@ -356,6 +373,12 @@ subroutine report_total_number_of_particles
        INTEGER length_of_string
      END FUNCTION convert_int_to_txt_string
   END INTERFACE
+
+  IF (avg_flux_and_history) THEN
+      CALL DETERMINE_AVG_DATA_CREATION(avg_output_flag)
+      IF (avg_output_flag==0) RETURN
+  END IF
+  
 
   ALLOCATE(    rbufer(1:4*(N_spec+1)), STAT = ALLOC_ERR)
   ALLOCATE(   pwbufer(1:4*(N_spec+1)), STAT = ALLOC_ERR)

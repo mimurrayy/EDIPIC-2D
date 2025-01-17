@@ -79,11 +79,11 @@ SUBROUTINE INITIATE_SNAPSHOTS
   T2_old = -1
   N2_old = 0
 
-  ALLOCATE(                     timestep(1:9999), STAT = ALLOC_ERR)
-  ALLOCATE(           evdf_flag_timestep(1:9999), STAT = ALLOC_ERR)
-  ALLOCATE(             pp_flag_timestep(1:9999), STAT = ALLOC_ERR)
-  ALLOCATE(      ionrate2d_flag_timestep(1:9999), STAT = ALLOC_ERR)
-  ALLOCATE(part_coll_walls_flag_timestep(1:9999), STAT = ALLOC_ERR)
+  ALLOCATE(                     timestep(1:99999), STAT = ALLOC_ERR)
+  ALLOCATE(           evdf_flag_timestep(1:99999), STAT = ALLOC_ERR)
+  ALLOCATE(             pp_flag_timestep(1:99999), STAT = ALLOC_ERR)
+  ALLOCATE(      ionrate2d_flag_timestep(1:99999), STAT = ALLOC_ERR)
+  ALLOCATE(part_coll_walls_flag_timestep(1:99999), STAT = ALLOC_ERR)
      
   IF (Rank_of_process.EQ.0) PRINT '("### File init_snapshots is found. Reading the data file... ###")'
 
@@ -270,7 +270,7 @@ SUBROUTINE INITIATE_SNAPSHOTS
 !                 "--****-----*******.*****----********----*----*----*----*----*"
      WRITE (41, '(" number       time(ns)       T_cntr    vdf  pp  ioniz icbo ecbo ")')
      DO i = 1, N_of_all_snaps
-        WRITE (41, '(2x,i4,5x,f13.5,4x,i8,4x,i1,4x,i1,4x,L1,4x,L1,4x,L1)') &
+        WRITE (41, '(2x,i5,5x,f13.5,4x,i8,4x,i1,4x,i1,4x,L1,4x,L1,4x,L1)') &
              & i, &
              & Tcntr_snapshot(i) * 1.0d9 * delta_t_s, &
              & Tcntr_snapshot(i), &
@@ -592,7 +592,7 @@ SUBROUTINE CREATE_SNAPSHOT
         ALLOCATE(cs_JZsum(c_indx_x_min:c_indx_x_max, c_indx_y_min:c_indx_y_max), STAT=ALLOC_ERR)
         DO j = c_indx_y_min, c_indx_y_max
            DO i = c_indx_x_min, c_indx_x_max
-              cs_JZsum(i,j) = -cs_N(i,j) * cs_VY(i,j)
+              cs_JZsum(i,j) = -cs_N(i,j) * cs_VZ(i,j)
            END DO
         END DO
      END IF
@@ -2669,9 +2669,13 @@ END SUBROUTINE SAVE_ELECTRONS_COLLIDED_WITH_BOUNDARY_OBJECTS
 SUBROUTINE FINISH_SNAPSHOTS
 
   USE Snapshots
+  USE AvgSnapshots, ONLY: plane_x_cuts_location, plane_y_cuts_location
+  USE CurrentProblemValues, ONLY: whole_object, N_of_boundary_and_inner_objects
+  USE IonParticles, ONLY: N_spec
   IMPLICIT NONE
 
   INTEGER DEALLOC_ERR
+  INTEGER :: n
 
   IF (ALLOCATED(    Tcntr_snapshot)) DEALLOCATE(    Tcntr_snapshot, STAT=DEALLOC_ERR)
   IF (ALLOCATED(save_evdf_snapshot)) DEALLOCATE(save_evdf_snapshot, STAT=DEALLOC_ERR)
@@ -2679,5 +2683,11 @@ SUBROUTINE FINISH_SNAPSHOTS
   IF (ALLOCATED(save_ionization_rates_2d)) DEALLOCATE(save_ionization_rates_2d, STAT=DEALLOC_ERR)
   IF (ALLOCATED(save_ions_collided_with_bo)) DEALLOCATE(save_ions_collided_with_bo, STAT=DEALLOC_ERR)
   IF (ALLOCATED(save_e_collided_with_bo)) DEALLOCATE(save_e_collided_with_bo, STAT=DEALLOC_ERR)
-
+  IF (ALLOCATED(plane_x_cuts_location)) DEALLOCATE(plane_x_cuts_location, STAT=DEALLOC_ERR)
+  IF (ALLOCATED(plane_y_cuts_location)) DEALLOCATE(plane_y_cuts_location, STAT=DEALLOC_ERR)
+  
+  DO n = 1, N_of_boundary_and_inner_objects
+      IF (ALLOCATED(whole_object(n)%ion_hit_flux_avg_per_s)) DEALLOCATE(whole_object(n)%ion_hit_flux_avg_per_s, STAT=DEALLOC_ERR)
+      IF (ALLOCATED(whole_object(n)%ion_hit_count)) DEALLOCATE(whole_object(n)%ion_hit_flux_avg_per_s, STAT=DEALLOC_ERR)
+  END DO
 END SUBROUTINE FINISH_SNAPSHOTS

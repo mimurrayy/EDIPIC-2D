@@ -407,6 +407,7 @@ SUBROUTINE COLLECT_PARTICLE_BOUNDARY_HITS
   USE CurrentProblemValues
   USE ClusterAndItsBoundaries
   USE IonParticles, ONLY : N_spec
+  USE AvgSnapshots, ONLY: avg_flux_and_history
 
   IMPLICIT NONE
 
@@ -423,6 +424,7 @@ SUBROUTINE COLLECT_PARTICLE_BOUNDARY_HITS
   
   INTEGER k, pos1, pos2, s
   INTEGER :: local_debug_level
+  INTEGER :: avg_compute_flag
 
   local_debug_level = 3
   bufsize = N_of_boundary_and_inner_objects * (1 + N_spec)
@@ -454,13 +456,27 @@ SUBROUTINE COLLECT_PARTICLE_BOUNDARY_HITS
         whole_object(k)%ion_hit_count(1:N_spec) = ibuf_receive(pos1:pos2)
      END DO
      
-     IF (debug_level>=local_debug_level) print '("electrons hit boundaries :: ",20(2x,i8))', whole_object(1:N_of_boundary_and_inner_objects)%electron_hit_count           
-     do s = 1, N_spec
-        do k = 1, N_of_boundary_and_inner_objects
-           ibuf_send(k) = whole_object(k)%ion_hit_count(s)
-        end do
-        IF (debug_level>=local_debug_level) print '("ions (",i2,") hit boundaries :: ",20(2x,i8))', s, ibuf_send(1:N_of_boundary_and_inner_objects)
-     end do
+     ! Update avg flux if necessary
+     IF (avg_flux_and_history) THEN
+         CALL DECIDE_IF_COMPUTE_AVG_DATA_AFTER_RESTART(avg_compute_flag)
+         IF (avg_compute_flag==1) THEN 
+            whole_object(1:N_of_boundary_and_inner_objects)%electron_hit_flux_avg_per_s = whole_object(1:N_of_boundary_and_inner_objects)%electron_hit_flux_avg_per_s &
+                                                                                          + REAL(whole_object(1:N_of_boundary_and_inner_objects)%electron_hit_count)
+            DO k = 1, N_of_boundary_and_inner_objects
+               whole_object(k)%ion_hit_flux_avg_per_s(1:N_spec) = whole_object(k)%ion_hit_flux_avg_per_s(1:N_spec) + REAL(whole_object(k)%ion_hit_count(1:N_spec))
+            END DO
+         END IF
+     END IF
+
+      IF (debug_level>=local_debug_level) THEN
+         print '("electrons hit boundaries :: ",20(2x,i8))', whole_object(1:N_of_boundary_and_inner_objects)%electron_hit_count           
+         do s = 1, N_spec
+            do k = 1, N_of_boundary_and_inner_objects
+               ibuf_send(k) = whole_object(k)%ion_hit_count(s)
+            end do
+         print '("ions (",i2,") hit boundaries :: ",20(2x,i8))', s, ibuf_send(1:N_of_boundary_and_inner_objects)
+         end do
+      END IF
 
   END IF
 
@@ -471,7 +487,7 @@ END SUBROUTINE COLLECT_PARTICLE_BOUNDARY_HITS
 
 !-----------------------------------------
 !
-SUBROUTINE TRY_ION_COLL_WITH_INNER_OBJECT(s, x, y, vx, vy, vz, tag)
+SUBROUTINE TRY_ION_COLL_WITH_INNER_OBJECT(s, x, y, vx, vy, vz, tag, n_obj_collision)
 
   USE ParallelOperationValues
   USE ClusterAndItsBoundaries
@@ -491,6 +507,7 @@ SUBROUTINE TRY_ION_COLL_WITH_INNER_OBJECT(s, x, y, vx, vy, vz, tag)
   REAL(8) :: r_old, vx_old, vy_old, x_cart, z_cart ! old radius, readial and axial velocity in r-z
   REAL(8) :: alpha_ang  
   REAL(8) :: vx_new, vy_new, vz_new
+  INTEGER, INTENT(OUT) :: n_obj_collision
 !  TYPE(boundary_object) myobject
 
   REAL(8) xorg, yorg
@@ -507,6 +524,8 @@ SUBROUTINE TRY_ION_COLL_WITH_INNER_OBJECT(s, x, y, vx, vy, vz, tag)
   INTEGER coll_direction_flag
   REAL(8) :: t_star, R_max
   REAL coll_coord   ! coordinate of collision point, y/x for collisions with vertical/horizontal segments, respectively
+  
+  n_obj_collision = 0
   
   IF (i_cylindrical==0) THEN
       xorg = x - vx*N_subcycles
@@ -580,7 +599,7 @@ SUBROUTINE TRY_ION_COLL_WITH_INNER_OBJECT(s, x, y, vx, vy, vz, tag)
   END DO   !### DO n_try = N_of_boundary_objects+1, N_of_boundary_and_inner_objects
    
   IF (mcross.EQ.-1) THEN
-     PRINT '("Error-1 in TRY_ION_COLL_WITH_INNER_OBJECT. If this is a problem with cylindrical and specular reflection, remove specular walls behind inner object")'
+     PRINT '("Error-1 in TRY_ION_COLL_WITH_INNER_OBJECT. If this is a problem with cylindrical and specular reflection, remove specular walls behind inner object",4(2x,f10.4))', xorg, yorg, x, y
      CALL MPI_ABORT(MPI_COMM_WORLD, ierr)
   END IF
 
@@ -600,6 +619,7 @@ SUBROUTINE TRY_ION_COLL_WITH_INNER_OBJECT(s, x, y, vx, vy, vz, tag)
   END SELECT
 
   CALL ADD_ION_TO_BO_COLLS_LIST(s, coll_coord, REAL(vx_new), REAL(vy_new), REAL(vz_new), tag, n_do, mcross)
+  n_obj_collision = n_do
 
   CALL DO_ION_COLL_WITH_INNER_OBJECT(s, xcross, ycross, vx_new, vy_new, vz_new, tag, whole_object(n_do), coll_direction_flag,xorg,vx_old,vy_old)
 
