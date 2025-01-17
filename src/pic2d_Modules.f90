@@ -180,6 +180,7 @@ MODULE CurrentProblemValues
   REAL(8), PARAMETER :: three = 3.0_8
   REAL(8), PARAMETER :: four = 4.0_8
   REAL(8), PARAMETER :: five = 5.0_8
+  REAL(8), PARAMETER :: bessel_first_zero_order_zero = 2.4048255_8
   REAL(8) eps_0_Fm
 
   INTEGER, PARAMETER :: string_length = 300
@@ -201,8 +202,12 @@ MODULE CurrentProblemValues
   INTEGER :: i_one_particle                                  ! Initialize domain with one particle (=1, 0 otherwise by default)
   REAL(8) :: vthx_factor,vthy_factor,vthz_factor             ! If one particle in domain, these are factor of of the thermal speed for each direction (you can choose the velocity of the imposed particle)
   INTEGER :: i_velocity_one_particle                         ! I impose velocity of the only particle in domain (=1) or I do nothing(=0)
+  INTEGER :: i_customed_profile_initialization                 ! Customed initial profiles imposed. =1: n=N_uniform*J0(alpha*X)*(ch(alpha*(Y-Y_shift_exp_Y))-ch(alpha*Y0_exp)/sh(alpha*Y0_exp)*sh(alpha*(Y-Y_shift_exp_Y))
+  REAL(8) :: Rw_bessel                                       ! i_customed_profile_initialization=1: side wall. Profile valid for 0<=X<=Rw_bessel
+  REAL(8) :: Y_shift_exp_Y                                   ! i_customed_profile_initialization=1: Y shift. Profile valid for Y_shift_exp_Y<Y<Y0_exp+Y_shift_exp_Y
+  REAL(8) :: Y0_exp                                          ! i_customed_profile_initialization=1: total distance over which profile is valid. Profile valid for Y_shift_exp_Y<Y<Y0_exp+Y_shift_exp_Y
 
-  REAL(8) :: LX, LY ! maximal dimensions of domain (dimensio)
+  REAL(8) :: LX, LY ! maximal dimensions of domain (dimensions)
 
   INTEGER :: c_indx_x_min_total, c_indx_x_max_total, c_indx_y_min_total, c_indx_y_max_total ! Maximal and minal index of simulation doain in X and Y directions
 
@@ -229,7 +234,7 @@ MODULE CurrentProblemValues
   INTEGER N_grid_block_x  ! number of cells along the X-direction in a block
   INTEGER N_grid_block_y  ! number of cells along the Y-direction in a block
 
-  INTEGER N_of_particles_cell  ! number of macroparticles per cell for the scale density
+  INTEGER(8) :: N_of_particles_cell  ! number of macroparticles per cell for the scale density
   REAL(KIND=dble_precision) :: N_of_particles_cell_dble
 
   INTEGER cluster_N_blocks_x  ! number of blocks along the X-direction in a cluster
@@ -334,6 +339,8 @@ MODULE CurrentProblemValues
      INTEGER, ALLOCATABLE :: ap_T_cntr(:)   ! array of times (in units of timesteps) of amplitude profile data points
 
      LOGICAL potential_must_be_solved       ! .TRUE. for [metal] electrodes connected to external circuits, .FALSE. otherwise
+     INTEGER :: N_objects_connected_to_it   ! Number of objects connected to the preset=nt object (useful if I want to connect electrically object A with object B. Object B can be connected to external circuit)
+     INTEGER, ALLOCATABLE :: connected_object_no(:)
 
      REAL    N_electron_constant_emit      ! constant number of electron macroparticles to be injected each time step (for example due to emission from a thermocathode)
      INTEGER model_constant_emit
@@ -1115,6 +1122,17 @@ MODULE SetupValues
   INTEGER :: i_ionize_source_ecr ! For Ecr, volumic ionization source term 
   REAL(8) :: ioniz_ecr_vol_I_injected ! For ECR volumic ionization source: injected current in A
   REAL(8) :: xs_ioniz,xe_ioniz,ys_ioniz,ye_ioniz ! For ECR volumic ionization source: position of ionization volumic source
+
+  ! Ionization source term that is flux dependent
+  INTEGER :: i_ionize_source_flux_dependent ! if equal to 1, the number of pairs of e-i to be injected is given by a measured ion flux in the domain
+  REAL(8) :: xs_ioniz_flux_dependent,xe_ioniz_flux_dependent,ys_ioniz_flux_dependent,ye_ioniz_flux_dependent ! Volume of ionization source term 
+  ! INTEGER :: j_ion_source_start_flux_dependent, j_ion_source_end_flux_dependent, i_ion_source_start_flux_dependent, i_ion_source_end_flux_dependent
+  INTEGER :: c_j_ion_source_start_flux_dependent, c_j_ion_source_end_flux_dependent, c_i_ion_source_start_flux_dependent, c_i_ion_source_end_flux_dependent ! boundaries for cluster
+  INTEGER :: i_ionize_source_flux_dependent_plane_X, i_ionize_source_flux_dependent_plane_Y ! only one of them can be equal to 1. Will mean that plane is at location X= or Y= something
+  REAL(8) :: cut_location_flux_plane_for_ionization ! position of flux plane in m 
+  REAL(8) :: number_of_ions_crossing_plane, cluster_number_of_ions_crossing_plane, total_number_of_ions_crossing_plane
+  REAL(8) :: portion_injections_per_cluster_flux_dependent_ionization, leftovers_injection!, total_number_injected
+  ! INTEGER :: total_pairs_injected
 
 END MODULE SetupValues
 
@@ -2318,3 +2336,177 @@ MODULE mod_input_output
 
   END SUBROUTINE check_file_existence
  END MODULE mod_input_output
+
+!--------------------------------------------------------------------------------------------------
+!     MODULE numerics
+!>    @details Useful numerical techniques, such as integrals
+!!    @authors W. Villafana
+!!    @date    Oct-28-2024
+!--------------------------------------------------------------------------------------------------
+
+MODULE mod_numerics
+
+  USE CurrentProblemValues, ONLY: zero, half
+  IMPLICIT NONE
+  CONTAINS
+
+!--------------------------------------------------------------------------------------------------
+!     SUBROUTINE mid_point_integration
+!>    @details This subroutine calculates the integral of a function using the midpoint rule.
+!!    @authors W. Villafana
+!!    @date    Oct-28-2024
+!     @input 
+!       f       - Function to integrate (passed as an argument).
+!       a, b    - Limits of integration.
+!       N       - Number of intervals (must be positive).
+!     @output
+!       result  - Result of the integration (output).
+!--------------------------------------------------------------------------------------------------   
+  
+  SUBROUTINE mid_point_integration(f, a, b, N, result)
+
+
+    IMPLICIT NONE
+    INTERFACE
+      FUNCTION f(x)  ! Interface for the function to integrate
+        REAL(8) :: f
+        REAL(8), INTENT(IN) :: x
+      END FUNCTION f
+    END INTERFACE
+
+    REAL(8), INTENT(IN) :: a, b
+    INTEGER, INTENT(IN) :: N
+    REAL(8), INTENT(OUT) :: result
+
+    REAL(8) :: h, x_mid
+    INTEGER :: i
+
+    ! Check if N is valid
+    IF (N <= 0) THEN
+       PRINT *, "Error: N must be positive."
+       STOP
+    END IF
+
+    ! Step size
+    h = (b - a) / N
+
+    ! Initialize the result
+    result = zero
+
+    ! Sum up the midpoint values
+    DO i = 1, N
+       x_mid = a + (i - half) * h
+       result = result + f(x_mid)
+    END DO
+
+    ! Multiply by the step size to get the final result
+    result = result * h
+
+  END SUBROUTINE mid_point_integration
+
+END MODULE mod_numerics  
+
+!--------------------------------------------------------------------------------------------------
+!     MODULE function_wrappers_1d
+!>    @details wrapper for 1D functions
+!!    @authors W. Villafana
+!!    @date    Oct-28-2024
+!--------------------------------------------------------------------------------------------------
+MODULE mod_function_wrappers_1d
+
+  USE CurrentProblemValues, ONLY: string_length, zero
+  USE mod_print, ONLY: print_error
+  IMPLICIT NONE
+  CONTAINS
+
+!--------------------------------------------------------------------------------------------------
+!     FUNCTION evaluate_function
+!>    @details This function selects and evaluates a predefined 1D function based on the specified 
+!>             type. It acts as a central selector, allowing flexible choice among different 
+!>             functions without modifying the calling code.
+!!    @authors W. Villafana
+!!    @date    Oct-28-2024
+!     @input 
+!       func_type - Character string specifying the function type ("bessel", "cylindrical", etc.).
+!       x         - The input variable for the function, of type REAL(8).
+!     @output
+!       f_val     - The evaluated result of the function at the specified value x, of type REAL(8).
+!--------------------------------------------------------------------------------------------------
+
+  FUNCTION evaluate_function(func_type, x) RESULT(f_val)
+    ! Selects a function to evaluate based on func_type
+    CHARACTER(LEN=string_length), INTENT(IN) :: func_type
+    REAL(8), INTENT(IN) :: x
+    REAL(8) :: f_val
+    CHARACTER(LEN=string_length) :: message, routine
+
+    routine = 'evaluate_function'
+
+    SELECT CASE (TRIM(func_type))
+    CASE ("bessel_diffusion")
+      f_val = bessel_diffusion(x)
+    CASE ("cosh_sinh_diffusion")
+      f_val = cosh_sinh_diffusion(x)
+    CASE DEFAULT
+      WRITE(message, '(A,A)') "Unknown function type. Only: 'bessel_diffusion', 'cosh_sinh_diffusion' are available. Received ",TRIM(func_type)
+      CALL print_error(message,routine=routine)
+    END SELECT
+  END FUNCTION evaluate_function
+
+  FUNCTION bessel_diffusion(x) RESULT(f_val)
+    USE CurrentProblemValues, ONLY: Rw_bessel, bessel_first_zero_order_zero
+    REAL(8), INTENT(IN) :: x
+    REAL(8) :: f_val, alpha, cylindrical_volume_part
+    alpha = bessel_first_zero_order_zero/Rw_bessel
+    f_val = BESSEL_J0(x*alpha)
+  END FUNCTION bessel_diffusion
+
+  FUNCTION cosh_sinh_diffusion(y) RESULT(f_val)
+    USE CurrentProblemValues, ONLY: Rw_bessel, bessel_first_zero_order_zero, Y_shift_exp_Y, Y0_exp
+    REAL(8), INTENT(IN) :: y
+    REAL(8) :: f_val, alpha, y_arg
+    alpha = bessel_first_zero_order_zero/Rw_bessel
+    y_arg = y-Y_shift_exp_Y
+    f_val = COSH(alpha*y_arg)-COSH(alpha*Y0_exp)/SINH(alpha*Y0_exp)*SINH(alpha*y_arg)
+  END FUNCTION cosh_sinh_diffusion
+
+END MODULE mod_function_wrappers_1d
+!--------------------------------------------------------------------------------------------------
+!     MODULE array_utils
+!>    @details Provides utility subroutines for array manipulation, including resizing arrays.
+!!    @authors W. Villafana
+!!    @date    Nov-19-2024
+!--------------------------------------------------------------------------------------------------
+
+MODULE array_utils
+
+IMPLICIT NONE
+CONTAINS
+
+!--------------------------------------------------------------------------------------------------
+!     SUBROUTINE increase_array_size
+!>    @details Dynamically increases the size of an allocatable array while preserving its content.
+!>             If the array is not allocated, it initializes it to the specified size.
+!!    @param[inout] array     The allocatable array to resize.
+!!    @param[in]    new_size  The new size for the array.
+!!    @authors      W. Villafana
+!!    @date         Nov-19-2024
+!--------------------------------------------------------------------------------------------------
+
+  SUBROUTINE increase_array_size(array, new_size)
+    INTEGER, ALLOCATABLE :: array(:)
+    INTEGER :: new_size
+    INTEGER, ALLOCATABLE :: temp(:)
+
+    IF (.NOT. ALLOCATED(array)) THEN
+       ALLOCATE(array(new_size))
+    ELSE
+       ALLOCATE(temp(SIZE(array)))
+       temp = array  ! Store current values
+       DEALLOCATE(array)
+       ALLOCATE(array(new_size))
+       array(:SIZE(temp)) = temp  ! Restore values
+    ENDIF
+  END SUBROUTINE increase_array_size
+
+END MODULE array_utils
