@@ -50,7 +50,7 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
 
   USE MCCollisions
   USE IonParticles
-  USE CurrentProblemValues, ONLY : energy_factor_eV, delta_t_s, N_subcycles, V_scale_ms, T_cntr
+  USE CurrentProblemValues, ONLY : energy_factor_eV, delta_t_s, N_subcycles, V_scale_ms
   USE rng_wrapper
 
   IMPLICIT NONE
@@ -59,9 +59,8 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
   real(8) ngas_m3, sigma_m2_1eV, alpha, probab_rcx_therm_2
   real(8) factor_eV, vfactor, prob_factor
 
-  real(8) vx, vy, vz, energy_eV, vr_ms
+  real(8) vx, vy, vz, vsq, energy_eV, vabs_ms
   real(8) probab_rcx
-  real(8) vxn, vyn, vzn, vr
 
 ! functions
   real(8) neutral_density_normalized, sigma_rcx_m2
@@ -90,7 +89,6 @@ subroutine PERFORM_RESONANT_CHARGE_EXCHANGE
      prob_factor = ngas_m3 * delta_t_s * N_subcycles
 
      DO i = 1, N_ions(s)
-
 
         vx = ion(s)%part(i)%VX
         vy = ion(s)%part(i)%VY
